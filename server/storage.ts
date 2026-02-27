@@ -4,10 +4,16 @@ import {
   type Task, type InsertTask,
   type AgentMessage, type InsertAgentMessage,
   type ActivityLog, type InsertActivityLog,
+  type ChatHistory, type InsertChatHistory,
+  type Settings,
+  type MeetingRoom, type InsertMeetingRoom,
+  type MeetingParticipant, type InsertMeetingParticipant,
+  type MeetingMessage, type InsertMeetingMessage,
   agents, tasks, agentMessages, activityLogs, users,
+  chatHistory, settings, meetingRooms, meetingParticipants, meetingMessages,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, desc, or, and } from "drizzle-orm";
+import { eq, desc, or, and, asc } from "drizzle-orm";
 
 export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
@@ -30,6 +36,26 @@ export interface IStorage {
 
   getActivityLogs(limit?: number): Promise<ActivityLog[]>;
   createActivityLog(log: InsertActivityLog): Promise<ActivityLog>;
+
+  getChatHistory(agentId: number): Promise<ChatHistory[]>;
+  createChatMessage(msg: InsertChatHistory): Promise<ChatHistory>;
+  clearChatHistory(agentId: number): Promise<void>;
+
+  getSetting(key: string): Promise<string | undefined>;
+  setSetting(key: string, value: string): Promise<void>;
+  getAllSettings(): Promise<Settings[]>;
+
+  createMeetingRoom(room: InsertMeetingRoom): Promise<MeetingRoom>;
+  getMeetingRoom(id: number): Promise<MeetingRoom | undefined>;
+  getAllMeetingRooms(): Promise<MeetingRoom[]>;
+  closeMeetingRoom(id: number): Promise<void>;
+
+  addParticipant(data: InsertMeetingParticipant): Promise<MeetingParticipant>;
+  removeParticipant(roomId: number, agentId: number): Promise<void>;
+  getRoomParticipants(roomId: number): Promise<MeetingParticipant[]>;
+
+  createMeetingMessage(msg: InsertMeetingMessage): Promise<MeetingMessage>;
+  getMeetingMessages(roomId: number): Promise<MeetingMessage[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -68,6 +94,9 @@ export class DatabaseStorage implements IStorage {
   }
 
   async deleteAgent(id: number): Promise<void> {
+    await db.delete(chatHistory).where(eq(chatHistory.agentId, id));
+    await db.delete(meetingParticipants).where(eq(meetingParticipants.agentId, id));
+    await db.delete(meetingMessages).where(eq(meetingMessages.agentId, id));
     await db.delete(agentMessages).where(
       or(eq(agentMessages.fromAgentId, id), eq(agentMessages.toAgentId, id))
     );
@@ -115,6 +144,83 @@ export class DatabaseStorage implements IStorage {
   async createActivityLog(log: InsertActivityLog): Promise<ActivityLog> {
     const [created] = await db.insert(activityLogs).values(log).returning();
     return created;
+  }
+
+  async getChatHistory(agentId: number): Promise<ChatHistory[]> {
+    return db.select().from(chatHistory)
+      .where(eq(chatHistory.agentId, agentId))
+      .orderBy(asc(chatHistory.createdAt));
+  }
+
+  async createChatMessage(msg: InsertChatHistory): Promise<ChatHistory> {
+    const [created] = await db.insert(chatHistory).values(msg).returning();
+    return created;
+  }
+
+  async clearChatHistory(agentId: number): Promise<void> {
+    await db.delete(chatHistory).where(eq(chatHistory.agentId, agentId));
+  }
+
+  async getSetting(key: string): Promise<string | undefined> {
+    const [row] = await db.select().from(settings).where(eq(settings.key, key));
+    return row?.value;
+  }
+
+  async setSetting(key: string, value: string): Promise<void> {
+    const existing = await this.getSetting(key);
+    if (existing !== undefined) {
+      await db.update(settings).set({ value }).where(eq(settings.key, key));
+    } else {
+      await db.insert(settings).values({ key, value });
+    }
+  }
+
+  async getAllSettings(): Promise<Settings[]> {
+    return db.select().from(settings);
+  }
+
+  async createMeetingRoom(room: InsertMeetingRoom): Promise<MeetingRoom> {
+    const [created] = await db.insert(meetingRooms).values(room).returning();
+    return created;
+  }
+
+  async getMeetingRoom(id: number): Promise<MeetingRoom | undefined> {
+    const [room] = await db.select().from(meetingRooms).where(eq(meetingRooms.id, id));
+    return room;
+  }
+
+  async getAllMeetingRooms(): Promise<MeetingRoom[]> {
+    return db.select().from(meetingRooms).orderBy(desc(meetingRooms.createdAt));
+  }
+
+  async closeMeetingRoom(id: number): Promise<void> {
+    await db.update(meetingRooms).set({ status: "closed" }).where(eq(meetingRooms.id, id));
+  }
+
+  async addParticipant(data: InsertMeetingParticipant): Promise<MeetingParticipant> {
+    const [created] = await db.insert(meetingParticipants).values(data).returning();
+    return created;
+  }
+
+  async removeParticipant(roomId: number, agentId: number): Promise<void> {
+    await db.delete(meetingParticipants).where(
+      and(eq(meetingParticipants.roomId, roomId), eq(meetingParticipants.agentId, agentId))
+    );
+  }
+
+  async getRoomParticipants(roomId: number): Promise<MeetingParticipant[]> {
+    return db.select().from(meetingParticipants).where(eq(meetingParticipants.roomId, roomId));
+  }
+
+  async createMeetingMessage(msg: InsertMeetingMessage): Promise<MeetingMessage> {
+    const [created] = await db.insert(meetingMessages).values(msg).returning();
+    return created;
+  }
+
+  async getMeetingMessages(roomId: number): Promise<MeetingMessage[]> {
+    return db.select().from(meetingMessages)
+      .where(eq(meetingMessages.roomId, roomId))
+      .orderBy(asc(meetingMessages.createdAt));
   }
 }
 

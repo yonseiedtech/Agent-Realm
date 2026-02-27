@@ -5,6 +5,7 @@ import { z } from "zod";
 import { storage } from "./storage";
 import { createAgent, removeAgent, chatWithAgent, assignTask, broadcastTask, triggerInterAgentDiscussion, onAgentEvent } from "./agents";
 import { workspace } from "./workspace";
+import { createRoom, inviteAgent, removeAgentFromRoom, startDiscussion, closeRoom, setMeetingBroadcast } from "./meetings";
 
 const createAgentSchema = z.object({
   name: z.string().min(1, "이름이 필요합니다"),
@@ -15,6 +16,10 @@ const updateAgentSchema = z.object({
   name: z.string().min(1).optional(),
   role: z.enum(["frontend", "backend", "testing", "general"]).optional(),
   status: z.enum(["idle", "working", "paused"]).optional(),
+  systemPrompt: z.string().nullable().optional(),
+  model: z.string().optional(),
+  maxTokens: z.number().min(1024).max(8192).optional(),
+  temperature: z.string().optional(),
 }).strict();
 
 export async function registerRoutes(
@@ -41,6 +46,8 @@ export async function registerRoutes(
   onAgentEvent((event) => {
     broadcast(event);
   });
+
+  setMeetingBroadcast(broadcast);
 
   app.get("/api/agents", async (_req, res) => {
     const agents = await storage.getAllAgents();
@@ -81,14 +88,76 @@ export async function registerRoutes(
 
   app.post("/api/agents/:id/chat", async (req, res) => {
     try {
-      const { message } = req.body;
+      const { message, attachmentUrl } = req.body;
       if (!message) return res.status(400).json({ error: "메시지가 필요합니다" });
-      const response = await chatWithAgent(parseInt(req.params.id), message);
+      const response = await chatWithAgent(parseInt(req.params.id), message, attachmentUrl);
       res.json({ response });
     } catch (e: any) {
       if (e.message?.includes("AI_INTEGRATIONS_ANTHROPIC_API_KEY")) {
         return res.status(503).json({ error: "AI API가 설정되지 않았습니다. Replit AI Integration을 확인하세요." });
       }
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get("/api/agents/:id/history", async (req, res) => {
+    try {
+      const history = await storage.getChatHistory(parseInt(req.params.id));
+      res.json(history);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.delete("/api/agents/:id/history", async (req, res) => {
+    try {
+      await storage.clearChatHistory(parseInt(req.params.id));
+      res.status(204).send();
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get("/api/settings", async (_req, res) => {
+    try {
+      const allSettings = await storage.getAllSettings();
+      const result: Record<string, string> = {};
+      for (const s of allSettings) result[s.key] = s.value;
+      res.json(result);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.put("/api/settings", async (req, res) => {
+    try {
+      const entries = Object.entries(req.body) as [string, string][];
+      for (const [key, value] of entries) {
+        await storage.setSetting(key, value);
+      }
+      res.json({ message: "설정이 저장되었습니다" });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/upload", async (req, res) => {
+    try {
+      const { data, filename } = req.body;
+      if (!data) return res.status(400).json({ error: "데이터가 필요합니다" });
+      const buffer = Buffer.from(data, "base64");
+      const allowedExts = ["png", "jpg", "jpeg", "gif", "webp", "svg"];
+      const rawExt = (filename?.split(".").pop() || "png").toLowerCase();
+      const ext = allowedExts.includes(rawExt) ? rawExt : "png";
+      const name = `upload_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
+      const fs = await import("fs/promises");
+      const path = await import("path");
+      const uploadDir = path.join(process.cwd(), "uploads");
+      await fs.mkdir(uploadDir, { recursive: true });
+      const filePath = path.join(uploadDir, name);
+      await fs.writeFile(filePath, buffer);
+      res.json({ url: `/uploads/${name}` });
+    } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
   });
@@ -168,6 +237,98 @@ export async function registerRoutes(
       res.json({ path: filePath, content });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/meetings", async (req, res) => {
+    try {
+      const schema = z.object({
+        name: z.string().min(1, "회의실 이름이 필요합니다"),
+        topic: z.string().optional(),
+      });
+      const parsed = schema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0].message });
+      const room = await createRoom(parsed.data.name, parsed.data.topic);
+      res.status(201).json(room);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get("/api/meetings", async (_req, res) => {
+    try {
+      const rooms = await storage.getAllMeetingRooms();
+      res.json(rooms);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get("/api/meetings/:id", async (req, res) => {
+    try {
+      const roomId = parseInt(req.params.id);
+      const room = await storage.getMeetingRoom(roomId);
+      if (!room) return res.status(404).json({ error: "회의실을 찾을 수 없습니다" });
+      const participants = await storage.getRoomParticipants(roomId);
+      const messages = await storage.getMeetingMessages(roomId);
+      const agents = await storage.getAllAgents();
+      const participantDetails = participants.map(p => {
+        const agent = agents.find(a => a.id === p.agentId);
+        return { ...p, agentName: agent?.name, agentRole: agent?.role, agentColor: agent?.color };
+      });
+      const messageDetails = messages.map(m => {
+        const agent = agents.find(a => a.id === m.agentId);
+        return { ...m, agentName: agent?.name, agentRole: agent?.role };
+      });
+      res.json({ ...room, participants: participantDetails, messages: messageDetails });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/meetings/:id/invite", async (req, res) => {
+    try {
+      const schema = z.object({ agentId: z.number() });
+      const parsed = schema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: "에이전트 ID가 필요합니다" });
+      const participant = await inviteAgent(parseInt(req.params.id), parsed.data.agentId);
+      res.status(201).json(participant);
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  app.delete("/api/meetings/:id/participants/:agentId", async (req, res) => {
+    try {
+      await removeAgentFromRoom(parseInt(req.params.id), parseInt(req.params.agentId));
+      res.status(204).send();
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/meetings/:id/discuss", async (req, res) => {
+    try {
+      const schema = z.object({ topic: z.string().min(1, "토론 주제가 필요합니다") });
+      const parsed = schema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0].message });
+      const roomId = parseInt(req.params.id);
+      startDiscussion(roomId, parsed.data.topic).catch(console.error);
+      res.json({ message: "토론이 시작되었습니다" });
+    } catch (e: any) {
+      if (e.message?.includes("AI_INTEGRATIONS_ANTHROPIC_API_KEY")) {
+        return res.status(503).json({ error: "AI API가 설정되지 않았습니다." });
+      }
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/meetings/:id/close", async (req, res) => {
+    try {
+      await closeRoom(parseInt(req.params.id));
+      res.json({ message: "회의가 종료되었습니다" });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
     }
   });
 

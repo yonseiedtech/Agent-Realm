@@ -5,6 +5,7 @@ import Scene3D from "@/components/Scene3D";
 import AgentPanel from "@/components/AgentPanel";
 import ActivityFeed from "@/components/ActivityFeed";
 import AgentChatPanel from "@/components/AgentChatPanel";
+import MeetingRoom from "@/components/MeetingRoom";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -18,6 +19,7 @@ import {
 } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Plus, Trash2, Users, Wifi, WifiOff, Send, MessageSquare } from "lucide-react";
+import SettingsDialog from "@/components/SettingsDialog";
 import type { Agent } from "@shared/schema";
 
 export default function Home() {
@@ -33,6 +35,7 @@ export default function Home() {
     queryClient.invalidateQueries({ queryKey: ["/api/agents"] });
     queryClient.invalidateQueries({ queryKey: ["/api/activities"] });
     queryClient.invalidateQueries({ queryKey: ["/api/agent-messages"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/meetings"] });
   }, [queryClient]);
 
   const { connected } = useWebSocket(onWsMessage);
@@ -101,6 +104,7 @@ export default function Home() {
         </div>
 
         <div className="flex items-center gap-2">
+          <SettingsDialog />
           <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
             <DialogTrigger asChild>
               <Button data-testid="button-add-agent" size="sm" className="bg-[#5865F2] hover:bg-[#4752C4] text-white">
@@ -240,12 +244,18 @@ export default function Home() {
                 <TabsTrigger value="chat" className="text-xs data-[state=active]:bg-[#40444B] data-[state=active]:text-white">
                   에이전트 대화
                 </TabsTrigger>
+                <TabsTrigger value="meetings" className="text-xs data-[state=active]:bg-[#40444B] data-[state=active]:text-white" data-testid="tab-meetings">
+                  회의실
+                </TabsTrigger>
               </TabsList>
               <TabsContent value="activity" className="flex-1 mt-0 overflow-hidden">
                 <ActivityFeed />
               </TabsContent>
               <TabsContent value="chat" className="flex-1 mt-0 overflow-hidden">
                 <AgentChatPanel agents={agents} />
+              </TabsContent>
+              <TabsContent value="meetings" className="flex-1 mt-0 overflow-hidden">
+                <MeetingRoom agents={agents} />
               </TabsContent>
             </Tabs>
           )}

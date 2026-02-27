@@ -1,16 +1,19 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { storage } from "./storage";
 import { workspace } from "./workspace";
-import type { Agent, AgentMessage } from "@shared/schema";
+import type { Agent } from "@shared/schema";
 
-function getAnthropicClient(): Anthropic {
-  if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) {
+async function getAnthropicClient(): Promise<Anthropic> {
+  const customApiKey = await storage.getSetting("custom_api_key");
+  const customBaseUrl = await storage.getSetting("custom_base_url");
+
+  const apiKey = customApiKey || process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY;
+  const baseURL = customBaseUrl || process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL;
+
+  if (!apiKey) {
     throw new Error("AI_INTEGRATIONS_ANTHROPIC_API_KEY 환경 변수가 설정되지 않았습니다");
   }
-  return new Anthropic({
-    apiKey: process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY,
-    baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL,
-  });
+  return new Anthropic({ apiKey, baseURL });
 }
 
 interface ConversationMessage {
@@ -18,12 +21,10 @@ interface ConversationMessage {
   content: string;
 }
 
-const agentConversations = new Map<number, ConversationMessage[]>();
-
 type EventCallback = (event: AgentEvent) => void;
 
 export interface AgentEvent {
-  type: "status_change" | "activity" | "agent_message" | "task_update" | "agent_created" | "agent_deleted";
+  type: "status_change" | "activity" | "agent_message" | "task_update" | "agent_created" | "agent_deleted" | "meeting_update";
   data: any;
 }
 
@@ -37,7 +38,7 @@ export function onAgentEvent(cb: EventCallback) {
   };
 }
 
-function emitEvent(event: AgentEvent) {
+export function emitEvent(event: AgentEvent) {
   for (const cb of eventListeners) {
     try { cb(event); } catch {}
   }
@@ -180,35 +181,48 @@ export async function createAgent(name: string, role: string): Promise<Agent> {
     avatarType: AVATAR_TYPES[avatarIndex],
     currentTask: null,
     currentFile: null,
+    systemPrompt: null,
+    model: "claude-sonnet-4-6",
+    maxTokens: 4096,
+    temperature: "1",
   });
-  agentConversations.set(agent.id, []);
   emitEvent({ type: "agent_created", data: agent });
   return agent;
 }
 
 export async function removeAgent(id: number): Promise<void> {
-  agentConversations.delete(id);
   await storage.deleteAgent(id);
   emitEvent({ type: "agent_deleted", data: { id } });
 }
 
-export async function chatWithAgent(agentId: number, userMessage: string): Promise<string> {
+async function loadConversation(agentId: number): Promise<ConversationMessage[]> {
+  const history = await storage.getChatHistory(agentId);
+  return history.map(h => ({
+    role: h.role as "user" | "assistant",
+    content: h.content,
+  }));
+}
+
+export async function chatWithAgent(agentId: number, userMessage: string, attachmentUrl?: string): Promise<string> {
   const agent = await storage.getAgent(agentId);
   if (!agent) throw new Error("에이전트를 찾을 수 없습니다");
 
-  let conversation = agentConversations.get(agentId);
-  if (!conversation) {
-    conversation = [];
-    agentConversations.set(agentId, conversation);
-  }
+  await storage.createChatMessage({
+    agentId,
+    role: "user",
+    content: userMessage,
+    attachmentUrl: attachmentUrl || null,
+    attachmentType: attachmentUrl ? "image" : null,
+  });
 
-  conversation.push({ role: "user", content: userMessage });
+  const conversation = await loadConversation(agentId);
 
   const allAgents = await storage.getAllAgents();
   const otherAgents = allAgents.filter(a => a.id !== agentId);
   const agentListStr = otherAgents.map(a => `- #${a.id} ${a.name} (${a.role}): ${a.status}`).join("\n");
 
-  const systemPrompt = `${ROLE_SYSTEM_PROMPTS[agent.role] || ROLE_SYSTEM_PROMPTS.general}
+  const basePrompt = agent.systemPrompt || ROLE_SYSTEM_PROMPTS[agent.role] || ROLE_SYSTEM_PROMPTS.general;
+  const systemPrompt = `${basePrompt}
 
 현재 당신의 정보:
 - 이름: ${agent.name}
@@ -223,14 +237,21 @@ ${agentListStr || "없음"}
   await storage.updateAgent(agentId, { status: "working" });
   emitEvent({ type: "status_change", data: { agentId, status: "working" } });
 
+  const recentConversation = conversation.slice(-20);
+
   try {
-    const anthropic = getAnthropicClient();
+    const anthropic = await getAnthropicClient();
+    const modelName = agent.model || "claude-sonnet-4-6";
+    const maxTokens = agent.maxTokens || 4096;
+    const temp = parseFloat(agent.temperature || "1");
+
     let response = await anthropic.messages.create({
-      model: "claude-sonnet-4-6",
-      max_tokens: 4096,
+      model: modelName,
+      max_tokens: maxTokens,
+      temperature: temp,
       system: systemPrompt,
       tools: getTools(),
-      messages: conversation.map(m => ({ role: m.role, content: m.content })),
+      messages: recentConversation.map(m => ({ role: m.role, content: m.content })),
     });
 
     let fullResponse = "";
@@ -260,26 +281,29 @@ ${agentListStr || "없음"}
         }
       }
 
-      conversation.push({ role: "assistant", content: JSON.stringify(response.content) });
-      conversation.push({ role: "user", content: JSON.stringify(toolResults) });
+      recentConversation.push({ role: "assistant", content: JSON.stringify(response.content) });
+      recentConversation.push({ role: "user", content: JSON.stringify(toolResults) });
 
       response = await anthropic.messages.create({
-        model: "claude-sonnet-4-6",
-        max_tokens: 4096,
+        model: modelName,
+        max_tokens: maxTokens,
+        temperature: temp,
         system: systemPrompt,
         tools: getTools(),
-        messages: conversation.map(m => ({ role: m.role, content: m.content })),
+        messages: recentConversation.map(m => ({ role: m.role, content: m.content })),
       });
     }
 
     const finalTextBlocks = response.content.filter((b): b is Anthropic.TextBlock => b.type === "text");
     fullResponse += finalTextBlocks.map(b => b.text).join("");
 
-    conversation.push({ role: "assistant", content: fullResponse });
-
-    if (conversation.length > 20) {
-      conversation.splice(0, conversation.length - 20);
-    }
+    await storage.createChatMessage({
+      agentId,
+      role: "assistant",
+      content: fullResponse,
+      attachmentUrl: null,
+      attachmentType: null,
+    });
 
     await storage.updateAgent(agentId, { status: "idle", currentFile: null });
     emitEvent({ type: "status_change", data: { agentId, status: "idle" } });
@@ -320,7 +344,7 @@ export async function assignTask(agentId: number, description: string): Promise<
     await storage.createActivityLog({
       agentId,
       action: "task_completed",
-      details: `작업 완료: ${description}`,
+      details: description,
       filePath: null,
     });
     emitEvent({ type: "task_update", data: { ...task, status: "completed" } });
@@ -333,7 +357,7 @@ export async function assignTask(agentId: number, description: string): Promise<
     await storage.createActivityLog({
       agentId,
       action: "task_failed",
-      details: `작업 실패: ${description} - ${error.message}`,
+      details: `${description} - ${error.message}`,
       filePath: null,
     });
     emitEvent({ type: "task_update", data: { ...task, status: "failed" } });
@@ -360,7 +384,7 @@ export async function triggerInterAgentDiscussion(topic: string): Promise<void> 
     const msg = await storage.createAgentMessage({
       fromAgentId: initiator.id,
       toAgentId: other.id,
-      content: `팀 토론 주제: ${topic}`,
+      content: `${topic}`,
       messageType: "discussion",
     });
     emitEvent({ type: "agent_message", data: msg });

@@ -14,6 +14,7 @@ declare module "http" {
 
 app.use(
   express.json({
+    limit: "10mb",
     verify: (req, _res, buf) => {
       req.rawBody = buf;
     },
@@ -21,6 +22,9 @@ app.use(
 );
 
 app.use(express.urlencoded({ extended: false }));
+
+import path from "path";
+app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
 
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {
