@@ -27,12 +27,12 @@ export default function AgentChatPanel({ agents }: AgentChatPanelProps) {
     refetchInterval: 3000,
   });
 
-  const getAgentName = (id: number) => {
+  const getAgentName = (id: string) => {
     const agent = agents.find(a => a.id === id);
     return agent?.name || `에이전트 #${id}`;
   };
 
-  const getAgentImage = (id: number) => {
+  const getAgentImage = (id: string) => {
     const agent = agents.find(a => a.id === id);
     const role = agent?.role || "general";
     return `/characters/${role}.png`;

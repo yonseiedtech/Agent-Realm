@@ -33,7 +33,7 @@ export async function initTelegram() {
         return;
       }
       const statusText = agents.map(a =>
-        `${a.name} (#${a.id}) - ${a.role} | ${a.status}${a.currentTask ? ` | 📋 ${a.currentTask}` : ""}`
+        `${a.name} (${a.id}) - ${a.role} | ${a.status}${a.currentTask ? ` | 📋 ${a.currentTask}` : ""}`
       ).join("\n");
       bot.sendMessage(msg.chat.id, `📊 에이전트 상태:\n\n${statusText}`);
     });
@@ -44,7 +44,7 @@ export async function initTelegram() {
         bot.sendMessage(msg.chat.id, "등록된 에이전트가 없습니다.");
         return;
       }
-      const list = agents.map(a => `• #${a.id} ${a.name} (${a.role})`).join("\n");
+      const list = agents.map(a => `• ${a.id} ${a.name} (${a.role})`).join("\n");
       bot.sendMessage(msg.chat.id, `👥 에이전트 목록:\n\n${list}`);
     });
 
@@ -54,26 +54,27 @@ export async function initTelegram() {
       const role = parts[1] || "general";
       try {
         const agent = await createAgent(name, role);
-        bot.sendMessage(msg.chat.id, `✅ 에이전트 생성됨: ${agent.name} (#${agent.id}) - ${agent.role}`);
+        bot.sendMessage(msg.chat.id, `✅ 에이전트 생성됨: ${agent.name} (${agent.id}) - ${agent.role}`);
       } catch (e: any) {
         bot.sendMessage(msg.chat.id, `❌ 오류: ${e.message}`);
       }
     });
 
-    bot.onText(/\/remove (\d+)/, async (msg: any, match: any) => {
+    bot.onText(/\/remove (.+)/, async (msg: any, match: any) => {
       try {
-        await removeAgent(parseInt(match[1]));
-        bot.sendMessage(msg.chat.id, `✅ 에이전트 #${match[1]} 제거됨`);
+        const agentId = match[1].trim();
+        await removeAgent(agentId);
+        bot.sendMessage(msg.chat.id, `✅ 에이전트 ${agentId} 제거됨`);
       } catch (e: any) {
         bot.sendMessage(msg.chat.id, `❌ 오류: ${e.message}`);
       }
     });
 
-    bot.onText(/\/task (\d+) (.+)/, async (msg: any, match: any) => {
-      const agentId = parseInt(match[1]);
+    bot.onText(/\/task (\S+) (.+)/, async (msg: any, match: any) => {
+      const agentId = match[1];
       const description = match[2];
       try {
-        bot.sendMessage(msg.chat.id, `⏳ 에이전트 #${agentId}에게 작업 할당 중...`);
+        bot.sendMessage(msg.chat.id, `⏳ 에이전트 ${agentId}에게 작업 할당 중...`);
         const result = await assignTask(agentId, description);
         const truncated = result.response.length > 500 ? result.response.substring(0, 500) + "..." : result.response;
         bot.sendMessage(msg.chat.id, `✅ 작업 완료:\n\n${truncated}`);

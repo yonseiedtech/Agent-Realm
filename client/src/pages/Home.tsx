@@ -23,7 +23,7 @@ import SettingsDialog from "@/components/SettingsDialog";
 import type { Agent } from "@shared/schema";
 
 export default function Home() {
-  const [selectedAgentId, setSelectedAgentId] = useState<number | null>(null);
+  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [newAgentName, setNewAgentName] = useState("");
   const [newAgentRole, setNewAgentRole] = useState("general");
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -60,7 +60,7 @@ export default function Home() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: async (id: number) => {
+    mutationFn: async (id: string) => {
       await apiRequest("DELETE", `/api/agents/${id}`);
     },
     onSuccess: () => {

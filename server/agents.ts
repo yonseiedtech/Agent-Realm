@@ -1,20 +1,8 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { storage } from "./storage";
 import { workspace } from "./workspace";
+import { getAnthropicClient } from "./anthropic";
 import type { Agent } from "@shared/schema";
-
-async function getAnthropicClient(): Promise<Anthropic> {
-  const customApiKey = await storage.getSetting("custom_api_key");
-  const customBaseUrl = await storage.getSetting("custom_base_url");
-
-  const apiKey = customApiKey || process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY;
-  const baseURL = customBaseUrl || process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL;
-
-  if (!apiKey) {
-    throw new Error("AI_INTEGRATIONS_ANTHROPIC_API_KEY 환경 변수가 설정되지 않았습니다");
-  }
-  return new Anthropic({ apiKey, baseURL });
-}
 
 interface ConversationMessage {
   role: "user" | "assistant";
@@ -113,7 +101,7 @@ function getTools(): Anthropic.Tool[] {
       input_schema: {
         type: "object" as const,
         properties: {
-          to_agent_id: { type: "number", description: "메시지를 받을 에이전트 ID" },
+          to_agent_id: { type: "string", description: "메시지를 받을 에이전트 ID" },
           message: { type: "string", description: "보낼 메시지 내용" },
           message_type: { type: "string", enum: ["discussion", "suggestion", "request", "response"], description: "메시지 유형" }
         },
@@ -123,7 +111,7 @@ function getTools(): Anthropic.Tool[] {
   ];
 }
 
-async function handleToolCall(agentId: number, toolName: string, input: any): Promise<string> {
+async function handleToolCall(agentId: string, toolName: string, input: any): Promise<string> {
   switch (toolName) {
     case "list_files": {
       const files = await workspace.listFiles(input.path || ".");
@@ -190,12 +178,12 @@ export async function createAgent(name: string, role: string): Promise<Agent> {
   return agent;
 }
 
-export async function removeAgent(id: number): Promise<void> {
+export async function removeAgent(id: string): Promise<void> {
   await storage.deleteAgent(id);
   emitEvent({ type: "agent_deleted", data: { id } });
 }
 
-async function loadConversation(agentId: number): Promise<ConversationMessage[]> {
+async function loadConversation(agentId: string): Promise<ConversationMessage[]> {
   const history = await storage.getChatHistory(agentId);
   return history.map(h => ({
     role: h.role as "user" | "assistant",
@@ -203,7 +191,7 @@ async function loadConversation(agentId: number): Promise<ConversationMessage[]>
   }));
 }
 
-export async function chatWithAgent(agentId: number, userMessage: string, attachmentUrl?: string): Promise<string> {
+export async function chatWithAgent(agentId: string, userMessage: string, attachmentUrl?: string): Promise<string> {
   const agent = await storage.getAgent(agentId);
   if (!agent) throw new Error("에이전트를 찾을 수 없습니다");
 
@@ -316,7 +304,7 @@ ${agentListStr || "없음"}
   }
 }
 
-export async function assignTask(agentId: number, description: string): Promise<{ task: any; response: string }> {
+export async function assignTask(agentId: string, description: string): Promise<{ task: any; response: string }> {
   const task = await storage.createTask({
     agentId,
     description,

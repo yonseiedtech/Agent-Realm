@@ -3,8 +3,8 @@ import type { Agent } from "@shared/schema";
 
 interface Scene3DProps {
   agents: Agent[];
-  selectedAgentId: number | null;
-  onSelectAgent: (id: number) => void;
+  selectedAgentId: string | null;
+  onSelectAgent: (id: string) => void;
 }
 
 const roleLabels: Record<string, string> = {

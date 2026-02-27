@@ -1,7 +1,7 @@
 import fs from "fs/promises";
 import path from "path";
 
-const fileLocks = new Map<string, number>();
+const fileLocks = new Map<string, string>();
 
 export class Workspace {
   private basePath: string;
@@ -45,7 +45,7 @@ export class Workspace {
     return fs.readFile(resolved, "utf-8");
   }
 
-  async writeFile(filePath: string, content: string, agentId: number): Promise<void> {
+  async writeFile(filePath: string, content: string, agentId: string): Promise<void> {
     const lockHolder = fileLocks.get(filePath);
     if (lockHolder && lockHolder !== agentId) {
       throw new Error(`파일이 에이전트 #${lockHolder}에 의해 잠겨 있습니다`);
@@ -55,20 +55,20 @@ export class Workspace {
     await fs.writeFile(resolved, content, "utf-8");
   }
 
-  acquireLock(filePath: string, agentId: number): boolean {
+  acquireLock(filePath: string, agentId: string): boolean {
     const lockHolder = fileLocks.get(filePath);
     if (lockHolder && lockHolder !== agentId) return false;
     fileLocks.set(filePath, agentId);
     return true;
   }
 
-  releaseLock(filePath: string, agentId: number): void {
+  releaseLock(filePath: string, agentId: string): void {
     if (fileLocks.get(filePath) === agentId) {
       fileLocks.delete(filePath);
     }
   }
 
-  isLocked(filePath: string): { locked: boolean; agentId?: number } {
+  isLocked(filePath: string): { locked: boolean; agentId?: string } {
     const lockHolder = fileLocks.get(filePath);
     return lockHolder ? { locked: true, agentId: lockHolder } : { locked: false };
   }

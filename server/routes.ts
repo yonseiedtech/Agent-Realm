@@ -67,7 +67,7 @@ export async function registerRoutes(
 
   app.delete("/api/agents/:id", async (req, res) => {
     try {
-      await removeAgent(parseInt(req.params.id));
+      await removeAgent(req.params.id);
       res.status(204).send();
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -78,7 +78,7 @@ export async function registerRoutes(
     try {
       const parsed = updateAgentSchema.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0].message });
-      const updated = await storage.updateAgent(parseInt(req.params.id), parsed.data);
+      const updated = await storage.updateAgent(req.params.id, parsed.data);
       if (!updated) return res.status(404).json({ error: "에이전트를 찾을 수 없습니다" });
       res.json(updated);
     } catch (e: any) {
@@ -90,11 +90,11 @@ export async function registerRoutes(
     try {
       const { message, attachmentUrl } = req.body;
       if (!message) return res.status(400).json({ error: "메시지가 필요합니다" });
-      const response = await chatWithAgent(parseInt(req.params.id), message, attachmentUrl);
+      const response = await chatWithAgent(req.params.id, message, attachmentUrl);
       res.json({ response });
     } catch (e: any) {
-      if (e.message?.includes("AI_INTEGRATIONS_ANTHROPIC_API_KEY")) {
-        return res.status(503).json({ error: "AI API가 설정되지 않았습니다. Replit AI Integration을 확인하세요." });
+      if (e.message?.includes("ANTHROPIC_API_KEY")) {
+        return res.status(503).json({ error: "AI API가 설정되지 않았습니다. ANTHROPIC_API_KEY 환경변수를 확인하세요." });
       }
       res.status(500).json({ error: e.message });
     }
@@ -102,7 +102,7 @@ export async function registerRoutes(
 
   app.get("/api/agents/:id/history", async (req, res) => {
     try {
-      const history = await storage.getChatHistory(parseInt(req.params.id));
+      const history = await storage.getChatHistory(req.params.id);
       res.json(history);
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -111,7 +111,7 @@ export async function registerRoutes(
 
   app.delete("/api/agents/:id/history", async (req, res) => {
     try {
-      await storage.clearChatHistory(parseInt(req.params.id));
+      await storage.clearChatHistory(req.params.id);
       res.status(204).send();
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -166,10 +166,10 @@ export async function registerRoutes(
     try {
       const { description } = req.body;
       if (!description) return res.status(400).json({ error: "작업 설명이 필요합니다" });
-      const result = await assignTask(parseInt(req.params.id), description);
+      const result = await assignTask(req.params.id, description);
       res.json(result);
     } catch (e: any) {
-      if (e.message?.includes("AI_INTEGRATIONS_ANTHROPIC_API_KEY")) {
+      if (e.message?.includes("ANTHROPIC_API_KEY")) {
         return res.status(503).json({ error: "AI API가 설정되지 않았습니다." });
       }
       res.status(500).json({ error: e.message });
@@ -204,12 +204,12 @@ export async function registerRoutes(
   });
 
   app.get("/api/agents/:id/tasks", async (req, res) => {
-    const agentTasks = await storage.getTasksByAgent(parseInt(req.params.id));
+    const agentTasks = await storage.getTasksByAgent(req.params.id);
     res.json(agentTasks);
   });
 
   app.get("/api/agent-messages", async (req, res) => {
-    const agentId = req.query.agentId ? parseInt(req.query.agentId as string) : undefined;
+    const agentId = req.query.agentId as string | undefined;
     const messages = await storage.getAgentMessages(agentId);
     res.json(messages);
   });
@@ -266,7 +266,7 @@ export async function registerRoutes(
 
   app.get("/api/meetings/:id", async (req, res) => {
     try {
-      const roomId = parseInt(req.params.id);
+      const roomId = req.params.id;
       const room = await storage.getMeetingRoom(roomId);
       if (!room) return res.status(404).json({ error: "회의실을 찾을 수 없습니다" });
       const participants = await storage.getRoomParticipants(roomId);
@@ -288,10 +288,10 @@ export async function registerRoutes(
 
   app.post("/api/meetings/:id/invite", async (req, res) => {
     try {
-      const schema = z.object({ agentId: z.number() });
+      const schema = z.object({ agentId: z.string() });
       const parsed = schema.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ error: "에이전트 ID가 필요합니다" });
-      const participant = await inviteAgent(parseInt(req.params.id), parsed.data.agentId);
+      const participant = await inviteAgent(req.params.id, parsed.data.agentId);
       res.status(201).json(participant);
     } catch (e: any) {
       res.status(400).json({ error: e.message });
@@ -300,7 +300,7 @@ export async function registerRoutes(
 
   app.delete("/api/meetings/:id/participants/:agentId", async (req, res) => {
     try {
-      await removeAgentFromRoom(parseInt(req.params.id), parseInt(req.params.agentId));
+      await removeAgentFromRoom(req.params.id, req.params.agentId);
       res.status(204).send();
     } catch (e: any) {
       res.status(400).json({ error: e.message });
@@ -312,11 +312,11 @@ export async function registerRoutes(
       const schema = z.object({ topic: z.string().min(1, "토론 주제가 필요합니다") });
       const parsed = schema.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0].message });
-      const roomId = parseInt(req.params.id);
+      const roomId = req.params.id;
       startDiscussion(roomId, parsed.data.topic).catch(console.error);
       res.json({ message: "토론이 시작되었습니다" });
     } catch (e: any) {
-      if (e.message?.includes("AI_INTEGRATIONS_ANTHROPIC_API_KEY")) {
+      if (e.message?.includes("ANTHROPIC_API_KEY")) {
         return res.status(503).json({ error: "AI API가 설정되지 않았습니다." });
       }
       res.status(500).json({ error: e.message });
@@ -325,7 +325,7 @@ export async function registerRoutes(
 
   app.post("/api/meetings/:id/close", async (req, res) => {
     try {
-      await closeRoom(parseInt(req.params.id));
+      await closeRoom(req.params.id);
       res.json({ message: "회의가 종료되었습니다" });
     } catch (e: any) {
       res.status(400).json({ error: e.message });

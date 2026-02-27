@@ -1,19 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { storage } from "./storage";
+import { getAnthropicClient } from "./anthropic";
 import type { MeetingRoom, Agent } from "@shared/schema";
-
-async function getAnthropicClient(): Promise<Anthropic> {
-  const customApiKey = await storage.getSetting("custom_api_key");
-  const customBaseUrl = await storage.getSetting("custom_base_url");
-
-  const apiKey = customApiKey || process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY;
-  const baseURL = customBaseUrl || process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL;
-
-  if (!apiKey) {
-    throw new Error("AI_INTEGRATIONS_ANTHROPIC_API_KEY 환경 변수가 설정되지 않았습니다");
-  }
-  return new Anthropic({ apiKey, baseURL });
-}
 
 type MeetingBroadcast = (data: any) => void;
 let broadcastFn: MeetingBroadcast = () => {};
@@ -31,7 +19,7 @@ export async function createRoom(name: string, topic?: string): Promise<MeetingR
   return room;
 }
 
-export async function inviteAgent(roomId: number, agentId: number) {
+export async function inviteAgent(roomId: string, agentId: string) {
   const room = await storage.getMeetingRoom(roomId);
   if (!room) throw new Error("회의실을 찾을 수 없습니다");
   if (room.status === "closed") throw new Error("종료된 회의실입니다");
@@ -48,14 +36,14 @@ export async function inviteAgent(roomId: number, agentId: number) {
   return participant;
 }
 
-export async function removeAgentFromRoom(roomId: number, agentId: number) {
+export async function removeAgentFromRoom(roomId: string, agentId: string) {
   const room = await storage.getMeetingRoom(roomId);
   if (!room) throw new Error("회의실을 찾을 수 없습니다");
 
   await storage.removeParticipant(roomId, agentId);
 }
 
-export async function startDiscussion(roomId: number, topic: string) {
+export async function startDiscussion(roomId: string, topic: string) {
   const room = await storage.getMeetingRoom(roomId);
   if (!room) throw new Error("회의실을 찾을 수 없습니다");
   if (room.status === "closed") throw new Error("종료된 회의실입니다");
@@ -171,7 +159,7 @@ ${agents.map(a => `- ${a.name} (${a.role})`).join("\n")}
   }
 }
 
-export async function closeRoom(roomId: number) {
+export async function closeRoom(roomId: string) {
   const room = await storage.getMeetingRoom(roomId);
   if (!room) throw new Error("회의실을 찾을 수 없습니다");
 

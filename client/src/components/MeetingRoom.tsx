@@ -26,17 +26,17 @@ import type { Agent, MeetingRoom as MeetingRoomType } from "@shared/schema";
 
 interface MeetingRoomDetail extends MeetingRoomType {
   participants: Array<{
-    id: number;
-    roomId: number;
-    agentId: number;
+    id: string;
+    roomId: string;
+    agentId: string;
     agentName?: string;
     agentRole?: string;
     agentColor?: string;
   }>;
   messages: Array<{
-    id: number;
-    roomId: number;
-    agentId: number;
+    id: string;
+    roomId: string;
+    agentId: string;
     content: string;
     agentName?: string;
     agentRole?: string;
@@ -52,7 +52,7 @@ const roleLabels: Record<string, string> = {
 };
 
 export default function MeetingRoom({ agents }: { agents: Agent[] }) {
-  const [selectedRoomId, setSelectedRoomId] = useState<number | null>(null);
+  const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null);
   const [newRoomName, setNewRoomName] = useState("");
   const [newRoomTopic, setNewRoomTopic] = useState("");
   const [discussTopic, setDiscussTopic] = useState("");
@@ -90,7 +90,7 @@ export default function MeetingRoom({ agents }: { agents: Agent[] }) {
   });
 
   const inviteMutation = useMutation({
-    mutationFn: async (agentId: number) => {
+    mutationFn: async (agentId: string) => {
       await apiRequest("POST", `/api/meetings/${selectedRoomId}/invite`, { agentId });
     },
     onSuccess: () => {
@@ -100,7 +100,7 @@ export default function MeetingRoom({ agents }: { agents: Agent[] }) {
   });
 
   const removeMutation = useMutation({
-    mutationFn: async (agentId: number) => {
+    mutationFn: async (agentId: string) => {
       await apiRequest("DELETE", `/api/meetings/${selectedRoomId}/participants/${agentId}`);
     },
     onSuccess: () => {
@@ -213,7 +213,7 @@ export default function MeetingRoom({ agents }: { agents: Agent[] }) {
                 data-testid="button-invite-agent"
                 size="sm"
                 className="bg-[#5865F2] text-white text-xs h-7"
-                onClick={() => inviteAgentId && inviteMutation.mutate(parseInt(inviteAgentId))}
+                onClick={() => inviteAgentId && inviteMutation.mutate(inviteAgentId)}
                 disabled={!inviteAgentId || inviteMutation.isPending}
               >
                 <UserPlus className="w-3 h-3 mr-1" />
