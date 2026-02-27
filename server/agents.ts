@@ -69,7 +69,7 @@ const AVATAR_COLORS: Record<string, string> = {
   general: "#ED4245",
 };
 
-const AVATAR_TYPES = ["cat", "dog", "pig", "rabbit", "bear", "fox"];
+const AVATAR_TYPES = ["developer", "designer", "analyst", "engineer", "architect", "researcher"];
 
 function getTools(): Anthropic.Tool[] {
   return [

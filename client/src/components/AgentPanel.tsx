@@ -158,14 +158,21 @@ export default function AgentPanel({ agent, onClose }: AgentPanelProps) {
     paused: "일시정지",
   };
 
-  const avatarIcon = agent.avatarType === "cat" ? "C" : agent.avatarType === "dog" ? "D" : agent.avatarType === "pig" ? "P" : agent.avatarType === "rabbit" ? "R" : agent.avatarType === "bear" ? "B" : "F";
+  const roleCharacterImages: Record<string, string> = {
+    frontend: "/characters/frontend.png",
+    backend: "/characters/backend.png",
+    testing: "/characters/testing.png",
+    general: "/characters/general.png",
+  };
+
+  const charImage = roleCharacterImages[agent.role] || "/characters/general.png";
 
   return (
     <div data-testid={`agent-panel-${agent.id}`} className="flex flex-col h-full bg-[#2C2F33] border-l border-[#40444B]">
       <div className="flex items-center justify-between p-4 border-b border-[#40444B]">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-full flex items-center justify-center text-lg font-bold text-white" style={{ backgroundColor: agent.color }}>
-            {avatarIcon}
+          <div className="w-10 h-10 rounded-full overflow-hidden border-2" style={{ borderColor: agent.color }}>
+            <img src={charImage} alt={agent.name} className="w-full h-full object-cover" />
           </div>
           <div>
             <h3 className="font-bold text-white text-lg" data-testid={`text-agent-name-${agent.id}`}>{agent.name}</h3>

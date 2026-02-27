@@ -1,4 +1,4 @@
-import { useState, useEffect, Suspense } from "react";
+import { useState, useEffect } from "react";
 import type { Agent } from "@shared/schema";
 
 interface Scene3DProps {
@@ -20,16 +20,26 @@ const statusLabels: Record<string, string> = {
   paused: "일시정지",
 };
 
-const avatarEmojis: Record<string, string> = {
-  cat: "🐱",
-  dog: "🐶",
-  pig: "🐷",
-  rabbit: "🐰",
-  bear: "🐻",
-  fox: "🦊",
+const roleCharacterImages: Record<string, string> = {
+  frontend: "/characters/frontend.png",
+  backend: "/characters/backend.png",
+  testing: "/characters/testing.png",
+  general: "/characters/general.png",
 };
 
-function AgentCard({ agent, selected, onClick }: { agent: Agent; selected: boolean; onClick: () => void }) {
+const extraCharacterImages = [
+  "/characters/char_extra1.png",
+  "/characters/char_extra2.png",
+];
+
+function getCharacterImage(agent: Agent, index: number): string {
+  if (roleCharacterImages[agent.role]) {
+    return roleCharacterImages[agent.role];
+  }
+  return extraCharacterImages[index % extraCharacterImages.length];
+}
+
+function AgentCard({ agent, selected, onClick, index }: { agent: Agent; selected: boolean; onClick: () => void; index: number }) {
   return (
     <div
       data-testid={`agent-card-${agent.id}`}
@@ -53,10 +63,15 @@ function AgentCard({ agent, selected, onClick }: { agent: Agent; selected: boole
             boxShadow: agent.status === "working" ? `0 0 15px ${agent.color}40` : "0 4px 12px rgba(0,0,0,0.3)",
           }}
         >
-          <div className="text-5xl mb-1 transition-transform duration-500" style={{
+          <div className="w-20 h-20 mx-auto mb-1 rounded-full overflow-hidden transition-transform duration-500" style={{
             animation: agent.status === "working" ? "bounce 1s infinite" : "none",
           }}>
-            {avatarEmojis[agent.avatarType] || "🤖"}
+            <img
+              src={getCharacterImage(agent, index)}
+              alt={agent.name}
+              className="w-full h-full object-cover"
+              data-testid={`img-agent-avatar-${agent.id}`}
+            />
           </div>
 
           <div className="relative w-16 h-8 mx-auto mb-1">
@@ -126,27 +141,6 @@ function AgentCard({ agent, selected, onClick }: { agent: Agent; selected: boole
   );
 }
 
-let Canvas3D: any = null;
-
-function Scene3DWithWebGL({ agents, selectedAgentId, onSelectAgent }: Scene3DProps) {
-  const [webglAvailable, setWebglAvailable] = useState<boolean | null>(null);
-
-  useEffect(() => {
-    try {
-      const canvas = document.createElement("canvas");
-      const gl = canvas.getContext("webgl") || canvas.getContext("experimental-webgl");
-      setWebglAvailable(!!gl);
-    } catch {
-      setWebglAvailable(false);
-    }
-  }, []);
-
-  if (webglAvailable === null) return null;
-  if (!webglAvailable) return null;
-
-  return null;
-}
-
 export default function Scene3D({ agents, selectedAgentId, onSelectAgent }: Scene3DProps) {
   return (
     <div
@@ -174,12 +168,13 @@ export default function Scene3D({ agents, selectedAgentId, onSelectAgent }: Scen
       </div>
 
       <div className="relative z-10 flex items-end gap-6 flex-wrap justify-center px-4">
-        {agents.map(agent => (
+        {agents.map((agent, index) => (
           <AgentCard
             key={agent.id}
             agent={agent}
             selected={selectedAgentId === agent.id}
             onClick={() => onSelectAgent(agent.id)}
+            index={index}
           />
         ))}
       </div>

@@ -32,11 +32,10 @@ export default function AgentChatPanel({ agents }: AgentChatPanelProps) {
     return agent?.name || `에이전트 #${id}`;
   };
 
-  const getAgentEmoji = (id: number) => {
+  const getAgentImage = (id: number) => {
     const agent = agents.find(a => a.id === id);
-    if (!agent) return "🤖";
-    const emojis: Record<string, string> = { cat: "🐱", dog: "🐶", pig: "🐷", rabbit: "🐰", bear: "🐻", fox: "🦊" };
-    return emojis[agent.avatarType] || "🤖";
+    const role = agent?.role || "general";
+    return `/characters/${role}.png`;
   };
 
   const sorted = [...messages].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
@@ -57,7 +56,7 @@ export default function AgentChatPanel({ agents }: AgentChatPanelProps) {
           {sorted.map((msg) => (
             <div key={msg.id} className="rounded-lg bg-[#36393F] p-3">
               <div className="flex items-center gap-2 mb-1">
-                <span className="text-sm">{getAgentEmoji(msg.fromAgentId)}</span>
+                <img src={getAgentImage(msg.fromAgentId)} alt="" className="w-5 h-5 rounded-full object-cover" />
                 <span className="text-xs font-semibold text-white">{getAgentName(msg.fromAgentId)}</span>
                 <span className="text-xs text-gray-500">→</span>
                 <span className="text-xs text-gray-400">
