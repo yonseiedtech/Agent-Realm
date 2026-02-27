@@ -5,16 +5,16 @@ import { z } from "zod";
 import { storage } from "./storage";
 import { createAgent, removeAgent, chatWithAgent, assignTask, broadcastTask, triggerInterAgentDiscussion, onAgentEvent } from "./agents";
 import { workspace } from "./workspace";
-import { createRoom, inviteAgent, removeAgentFromRoom, startDiscussion, closeRoom, setMeetingBroadcast } from "./meetings";
+import { createRoom, inviteAgent, removeAgentFromRoom, startDiscussion, closeRoom, setMeetingBroadcast, addUserMessage, inviteAllAgents } from "./meetings";
 
 const createAgentSchema = z.object({
   name: z.string().min(1, "이름이 필요합니다"),
-  role: z.enum(["frontend", "backend", "testing", "general"]).default("general"),
+  role: z.enum(["pm", "frontend", "backend", "designer", "tester", "devops", "general"]).default("general"),
 });
 
 const updateAgentSchema = z.object({
   name: z.string().min(1).optional(),
-  role: z.enum(["frontend", "backend", "testing", "general"]).optional(),
+  role: z.enum(["pm", "frontend", "backend", "designer", "tester", "devops", "general"]).optional(),
   status: z.enum(["idle", "working", "paused"]).optional(),
   systemPrompt: z.string().nullable().optional(),
   model: z.string().optional(),
@@ -208,6 +208,17 @@ export async function registerRoutes(
     res.json(agentTasks);
   });
 
+  app.patch("/api/tasks/:id", async (req, res) => {
+    try {
+      const { status, result } = req.body;
+      const updated = await storage.updateTask(req.params.id, { status, result });
+      if (!updated) return res.status(404).json({ error: "작업을 찾을 수 없습니다" });
+      res.json(updated);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   app.get("/api/agent-messages", async (req, res) => {
     const agentId = req.query.agentId as string | undefined;
     const messages = await storage.getAgentMessages(agentId);
@@ -309,17 +320,42 @@ export async function registerRoutes(
 
   app.post("/api/meetings/:id/discuss", async (req, res) => {
     try {
-      const schema = z.object({ topic: z.string().min(1, "토론 주제가 필요합니다") });
+      const schema = z.object({
+        topic: z.string().min(1, "토론 주제가 필요합니다"),
+        rounds: z.number().min(1).max(5).optional(),
+      });
       const parsed = schema.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0].message });
       const roomId = req.params.id;
-      startDiscussion(roomId, parsed.data.topic).catch(console.error);
+      const rounds = parsed.data.rounds ?? 2;
+      startDiscussion(roomId, parsed.data.topic, rounds).catch(console.error);
       res.json({ message: "토론이 시작되었습니다" });
     } catch (e: any) {
       if (e.message?.includes("ANTHROPIC_API_KEY")) {
         return res.status(503).json({ error: "AI API가 설정되지 않았습니다." });
       }
       res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/meetings/:id/user-message", async (req, res) => {
+    try {
+      const schema = z.object({ content: z.string().min(1, "메시지 내용이 필요합니다") });
+      const parsed = schema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0].message });
+      const msg = await addUserMessage(req.params.id, parsed.data.content);
+      res.status(201).json(msg);
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/meetings/:id/invite-all", async (req, res) => {
+    try {
+      const added = await inviteAllAgents(req.params.id);
+      res.json({ message: `${added.length}명의 에이전트가 초대되었습니다`, added });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
     }
   });
 

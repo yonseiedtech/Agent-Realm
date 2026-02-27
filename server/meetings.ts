@@ -1,6 +1,5 @@
-import Anthropic from "@anthropic-ai/sdk";
 import { storage } from "./storage";
-import { getAnthropicClient } from "./anthropic";
+import { chatCompletion } from "./ai-client";
 import type { MeetingRoom, Agent } from "@shared/schema";
 
 type MeetingBroadcast = (data: any) => void;
@@ -43,7 +42,7 @@ export async function removeAgentFromRoom(roomId: string, agentId: string) {
   await storage.removeParticipant(roomId, agentId);
 }
 
-export async function startDiscussion(roomId: string, topic: string) {
+export async function startDiscussion(roomId: string, topic: string, rounds: number = 2) {
   const room = await storage.getMeetingRoom(roomId);
   if (!room) throw new Error("회의실을 찾을 수 없습니다");
   if (room.status === "closed") throw new Error("종료된 회의실입니다");
@@ -59,6 +58,9 @@ export async function startDiscussion(roomId: string, topic: string) {
 
   if (agents.length === 0) throw new Error("유효한 참가 에이전트가 없습니다");
 
+  // Clamp rounds
+  const totalRounds = Math.max(1, Math.min(rounds, 5));
+
   const existingMessages = await storage.getMeetingMessages(roomId);
   const conversationContext: Array<{ agentName: string; agentRole: string; content: string }> = [];
 
@@ -70,20 +72,44 @@ export async function startDiscussion(roomId: string, topic: string) {
         agentRole: msgAgent.role,
         content: msg.content,
       });
+    } else if (msg.agentId === "user") {
+      conversationContext.push({
+        agentName: "사용자",
+        agentRole: "user",
+        content: msg.content,
+      });
     }
   }
 
-  const anthropic = await getAnthropicClient();
+  for (let round = 0; round < totalRounds; round++) {
+    const isLastRound = round === totalRounds - 1;
 
-  for (const agent of agents) {
-    const previousDiscussion = conversationContext
-      .map(c => `[${c.agentName} (${c.agentRole})]: ${c.content}`)
-      .join("\n\n");
+    for (const agent of agents) {
+      // Re-read messages to pick up any user messages injected mid-discussion
+      const latestMessages = await storage.getMeetingMessages(roomId);
+      const latestContext: Array<{ agentName: string; agentRole: string; content: string }> = [];
+      for (const msg of latestMessages) {
+        if (msg.agentId === "user") {
+          latestContext.push({ agentName: "사용자", agentRole: "user", content: msg.content });
+        } else {
+          const a = agents.find(x => x.id === msg.agentId);
+          if (a) latestContext.push({ agentName: a.name, agentRole: a.role, content: msg.content });
+        }
+      }
 
-    const systemPrompt = agent.systemPrompt ||
-      getDefaultSystemPrompt(agent.role);
+      const previousDiscussion = latestContext
+        .map(c => `[${c.agentName} (${c.agentRole})]: ${c.content}`)
+        .join("\n\n");
 
-    const fullSystemPrompt = `${systemPrompt}
+      const systemPrompt = agent.systemPrompt ||
+        getDefaultSystemPrompt(agent.role);
+
+      const roundInfo = `\n\n[라운드 ${round + 1}/${totalRounds}]`;
+      const lastRoundNote = isLastRound
+        ? "\n\n이번이 마지막 라운드입니다. 지금까지의 논의를 종합하여 최종 의견을 정리하세요."
+        : "";
+
+      const fullSystemPrompt = `${systemPrompt}
 
 현재 당신의 정보:
 - 이름: ${agent.name}
@@ -91,72 +117,107 @@ export async function startDiscussion(roomId: string, topic: string) {
 - ID: ${agent.id}
 
 회의실: ${room.name}
-토론 주제: ${topic}
+토론 주제: ${topic}${roundInfo}${lastRoundNote}
 
 참가 에이전트:
 ${agents.map(a => `- ${a.name} (${a.role})`).join("\n")}
 
 당신의 전문 분야 관점에서 주제에 대해 의견을 제시하세요. 간결하고 핵심적으로 답변하세요.`;
 
-    const userMessage = previousDiscussion
-      ? `회의 토론 주제: ${topic}\n\n이전 발언:\n${previousDiscussion}\n\n위 내용을 참고하여 당신의 전문 분야 관점에서 의견을 제시해주세요.`
-      : `회의 토론 주제: ${topic}\n\n첫 번째 발언자로서 당신의 전문 분야 관점에서 의견을 제시해주세요.`;
+      const userMessage = previousDiscussion
+        ? `회의 토론 주제: ${topic}\n\n이전 발언:\n${previousDiscussion}\n\n위 내용을 참고하여 당신의 전문 분야 관점에서 의견을 제시해주세요.`
+        : `회의 토론 주제: ${topic}\n\n첫 번째 발언자로서 당신의 전문 분야 관점에서 의견을 제시해주세요.`;
 
-    try {
-      const model = agent.model || "claude-sonnet-4-6";
-      const maxTokens = agent.maxTokens || 4096;
-      const temperature = parseFloat(agent.temperature || "1");
+      try {
+        const model = agent.model || "claude-sonnet-4-6";
+        const maxTokens = agent.maxTokens || 4096;
+        const temperature = parseFloat(agent.temperature || "1");
 
-      const response = await anthropic.messages.create({
-        model,
-        max_tokens: maxTokens,
-        temperature,
-        system: fullSystemPrompt,
-        messages: [{ role: "user", content: userMessage }],
-      });
+        const response = await chatCompletion({
+          model,
+          maxTokens,
+          temperature,
+          system: fullSystemPrompt,
+          messages: [{ role: "user", content: userMessage }],
+        });
 
-      const textBlocks = response.content.filter(
-        (b): b is Anthropic.TextBlock => b.type === "text"
-      );
-      const content = textBlocks.map(b => b.text).join("");
+        const content = response.content;
 
-      const meetingMsg = await storage.createMeetingMessage({
-        roomId,
-        agentId: agent.id,
-        content,
-      });
+        const meetingMsg = await storage.createMeetingMessage({
+          roomId,
+          agentId: agent.id,
+          content,
+        });
 
-      conversationContext.push({
-        agentName: agent.name,
-        agentRole: agent.role,
-        content,
-      });
+        broadcastFn({
+          type: "meeting_message",
+          data: {
+            ...meetingMsg,
+            agentName: agent.name,
+            agentRole: agent.role,
+          },
+        });
+      } catch (error: any) {
+        const errorMsg = await storage.createMeetingMessage({
+          roomId,
+          agentId: agent.id,
+          content: `[오류] 발언 생성 실패: ${error.message}`,
+        });
 
-      broadcastFn({
-        type: "meeting_message",
-        data: {
-          ...meetingMsg,
-          agentName: agent.name,
-          agentRole: agent.role,
-        },
-      });
-    } catch (error: any) {
-      const errorMsg = await storage.createMeetingMessage({
-        roomId,
-        agentId: agent.id,
-        content: `[오류] 발언 생성 실패: ${error.message}`,
-      });
-
-      broadcastFn({
-        type: "meeting_message",
-        data: {
-          ...errorMsg,
-          agentName: agent.name,
-          agentRole: agent.role,
-        },
-      });
+        broadcastFn({
+          type: "meeting_message",
+          data: {
+            ...errorMsg,
+            agentName: agent.name,
+            agentRole: agent.role,
+          },
+        });
+      }
     }
   }
+}
+
+export async function addUserMessage(roomId: string, content: string) {
+  const room = await storage.getMeetingRoom(roomId);
+  if (!room) throw new Error("회의실을 찾을 수 없습니다");
+  if (room.status === "closed") throw new Error("종료된 회의실입니다");
+
+  const meetingMsg = await storage.createMeetingMessage({
+    roomId,
+    agentId: "user",
+    content,
+  });
+
+  broadcastFn({
+    type: "meeting_message",
+    data: {
+      ...meetingMsg,
+      agentName: "사용자",
+      agentRole: "user",
+    },
+  });
+
+  return meetingMsg;
+}
+
+export async function inviteAllAgents(roomId: string) {
+  const room = await storage.getMeetingRoom(roomId);
+  if (!room) throw new Error("회의실을 찾을 수 없습니다");
+  if (room.status === "closed") throw new Error("종료된 회의실입니다");
+
+  const allAgents = await storage.getAllAgents();
+  const existing = await storage.getRoomParticipants(roomId);
+  const existingIds = new Set(existing.map(p => p.agentId));
+
+  const added = [];
+  for (const agent of allAgents) {
+    if (!existingIds.has(agent.id)) {
+      const participant = await storage.addParticipant({ roomId, agentId: agent.id });
+      added.push(participant);
+    }
+  }
+
+  return added;
 }
 
 export async function closeRoom(roomId: string) {
