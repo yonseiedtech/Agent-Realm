@@ -9,3 +9,7 @@ vite.config.ts.*
 uploads/
 firebase-service-account.json
 .local/
+release/
+*.db
+.claude/
+.bkit-memory.json

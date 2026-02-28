@@ -51,6 +51,8 @@ interface LeftSidebarProps {
   activeMeetingRoomId: string | null;
   onToggleChatPanel: () => void;
   chatPanelOpen: boolean;
+  onSelectWorkflow?: () => void;
+  activeWorkflowView?: boolean;
 }
 
 export default function LeftSidebar({
@@ -66,6 +68,8 @@ export default function LeftSidebar({
   activeMeetingRoomId,
   onToggleChatPanel,
   chatPanelOpen,
+  onSelectWorkflow,
+  activeWorkflowView,
 }: LeftSidebarProps) {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [newAgentName, setNewAgentName] = useState("");
@@ -181,6 +185,29 @@ export default function LeftSidebar({
             />
           ))}
         </div>
+
+        {/* Workflow button */}
+        {onSelectWorkflow && (
+          <div className="mt-3 px-2">
+            <button
+              className="flex items-center gap-2 w-full px-2 py-1.5 rounded text-left text-xs font-medium"
+              style={{
+                background: activeWorkflowView ? "var(--dc-bg-active)" : "transparent",
+                color: activeWorkflowView ? "var(--dc-text-primary)" : "var(--dc-text-secondary)",
+              }}
+              onClick={onSelectWorkflow}
+            >
+              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                <circle cx="6" cy="6" r="3" />
+                <circle cx="18" cy="6" r="3" />
+                <circle cx="12" cy="18" r="3" />
+                <path d="M8.5 7.5L10.5 16" />
+                <path d="M15.5 7.5L13.5 16" />
+              </svg>
+              워크플로우
+            </button>
+          </div>
+        )}
 
         {/* Meeting rooms section */}
         <div className="mt-3 pb-2">

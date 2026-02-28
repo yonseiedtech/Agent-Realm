@@ -9,6 +9,11 @@ import type {
   MeetingRoom, InsertMeetingRoom,
   MeetingParticipant, InsertMeetingParticipant,
   MeetingMessage, InsertMeetingMessage,
+  Workflow, InsertWorkflow,
+  WorkflowTask, InsertWorkflowTask,
+  TaskDependency, InsertTaskDependency,
+  AgentMemory, InsertAgentMemory,
+  ToolPlugin, InsertToolPlugin,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -53,6 +58,42 @@ export interface IStorage {
 
   createMeetingMessage(msg: InsertMeetingMessage): Promise<MeetingMessage>;
   getMeetingMessages(roomId: string): Promise<MeetingMessage[]>;
+
+  // Workflow
+  createWorkflow(data: InsertWorkflow): Promise<Workflow>;
+  getWorkflow(id: string): Promise<Workflow | undefined>;
+  getAllWorkflows(): Promise<Workflow[]>;
+  updateWorkflow(id: string, data: Partial<InsertWorkflow & { completedAt: string }>): Promise<Workflow | undefined>;
+  deleteWorkflow(id: string): Promise<void>;
+
+  // WorkflowTask
+  createWorkflowTask(data: InsertWorkflowTask): Promise<WorkflowTask>;
+  getWorkflowTask(id: string): Promise<WorkflowTask | undefined>;
+  getWorkflowTasks(workflowId: string): Promise<WorkflowTask[]>;
+  updateWorkflowTask(id: string, data: Partial<InsertWorkflowTask & { completedAt: string }>): Promise<WorkflowTask | undefined>;
+
+  // TaskDependency
+  createTaskDependency(data: InsertTaskDependency): Promise<TaskDependency>;
+  getTaskDependencies(taskId: string): Promise<TaskDependency[]>;
+  getDependents(taskId: string): Promise<TaskDependency[]>;
+
+  // AgentMemory
+  createAgentMemory(data: InsertAgentMemory): Promise<AgentMemory>;
+  getAgentMemories(agentId: string, type?: string, limit?: number): Promise<AgentMemory[]>;
+  searchAgentMemories(agentId: string, query: string, limit?: number): Promise<AgentMemory[]>;
+  deleteAgentMemory(id: string): Promise<void>;
+  clearAgentMemories(agentId: string): Promise<void>;
+  touchAgentMemory(id: string): Promise<void>;
+
+  // ToolPlugin
+  createToolPlugin(data: InsertToolPlugin): Promise<ToolPlugin>;
+  getToolPlugin(id: string): Promise<ToolPlugin | undefined>;
+  getAllToolPlugins(): Promise<ToolPlugin[]>;
+  updateToolPlugin(id: string, data: Partial<InsertToolPlugin>): Promise<ToolPlugin | undefined>;
+  deleteToolPlugin(id: string): Promise<void>;
+
+  // Meeting deletion
+  deleteMeetingRoom(id: string): Promise<void>;
 }
 
 import { SqliteStorage } from "./sqlite-storage";

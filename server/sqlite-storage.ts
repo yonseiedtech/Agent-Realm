@@ -11,6 +11,11 @@ import type {
   MeetingRoom, InsertMeetingRoom,
   MeetingParticipant, InsertMeetingParticipant,
   MeetingMessage, InsertMeetingMessage,
+  Workflow, InsertWorkflow,
+  WorkflowTask, InsertWorkflowTask,
+  TaskDependency, InsertTaskDependency,
+  AgentMemory, InsertAgentMemory,
+  ToolPlugin, InsertToolPlugin,
 } from "@shared/schema";
 import type { IStorage } from "./storage";
 
@@ -145,6 +150,86 @@ export class SqliteStorage implements IStorage {
       CREATE INDEX IF NOT EXISTS idx_meeting_messages_roomId ON meeting_messages(roomId);
       CREATE INDEX IF NOT EXISTS idx_meeting_messages_createdAt ON meeting_messages(createdAt);
     `);
+
+    // ─── Multi-Agent Advancement Tables ─────────────────────────────
+    const hasAdvancementMigration = this.db.prepare("SELECT 1 FROM _migrations WHERE name = 'multi_agent_advancement'").get();
+    if (!hasAdvancementMigration) {
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS workflows (
+          id TEXT PRIMARY KEY,
+          title TEXT NOT NULL,
+          description TEXT,
+          status TEXT NOT NULL DEFAULT 'pending',
+          createdBy TEXT,
+          createdAt TEXT NOT NULL,
+          completedAt TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS workflow_tasks (
+          id TEXT PRIMARY KEY,
+          workflowId TEXT NOT NULL,
+          agentId TEXT,
+          description TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'pending',
+          result TEXT,
+          priority TEXT NOT NULL DEFAULT 'medium',
+          suggestedRole TEXT,
+          orderIndex INTEGER NOT NULL DEFAULT 0,
+          createdAt TEXT NOT NULL,
+          completedAt TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS task_dependencies (
+          id TEXT PRIMARY KEY,
+          taskId TEXT NOT NULL,
+          dependsOnTaskId TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS agent_memories (
+          id TEXT PRIMARY KEY,
+          agentId TEXT NOT NULL,
+          type TEXT NOT NULL DEFAULT 'knowledge',
+          content TEXT NOT NULL,
+          metadata TEXT,
+          importance REAL NOT NULL DEFAULT 0.5,
+          accessCount INTEGER NOT NULL DEFAULT 0,
+          lastAccessedAt TEXT,
+          createdAt TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS tool_plugins (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL UNIQUE,
+          description TEXT,
+          inputSchema TEXT NOT NULL,
+          handlerPath TEXT NOT NULL,
+          enabledRoles TEXT,
+          isEnabled INTEGER NOT NULL DEFAULT 1,
+          createdAt TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_workflow_tasks_workflowId ON workflow_tasks(workflowId);
+        CREATE INDEX IF NOT EXISTS idx_workflow_tasks_agentId ON workflow_tasks(agentId);
+        CREATE INDEX IF NOT EXISTS idx_workflow_tasks_status ON workflow_tasks(status);
+        CREATE INDEX IF NOT EXISTS idx_task_dependencies_taskId ON task_dependencies(taskId);
+        CREATE INDEX IF NOT EXISTS idx_task_dependencies_dependsOn ON task_dependencies(dependsOnTaskId);
+        CREATE INDEX IF NOT EXISTS idx_agent_memories_agentId ON agent_memories(agentId);
+        CREATE INDEX IF NOT EXISTS idx_agent_memories_type ON agent_memories(type);
+        CREATE INDEX IF NOT EXISTS idx_agent_memories_importance ON agent_memories(importance);
+      `);
+
+      // FTS5 for agent memories full-text search
+      try {
+        this.db.exec(`
+          CREATE VIRTUAL TABLE IF NOT EXISTS agent_memories_fts USING fts5(
+            content,
+            tokenize='unicode61'
+          );
+        `);
+      } catch {}
+
+      this.db.prepare("INSERT OR IGNORE INTO _migrations (name) VALUES ('multi_agent_advancement')").run();
+    }
   }
 
   private now(): string {
@@ -424,5 +509,216 @@ export class SqliteStorage implements IStorage {
   async getMeetingMessages(roomId: string): Promise<MeetingMessage[]> {
     const rows = this.db.prepare("SELECT * FROM meeting_messages WHERE roomId = ? ORDER BY createdAt ASC").all(roomId) as any[];
     return rows.map(r => ({ ...r, createdAt: new Date(r.createdAt) }));
+  }
+
+  // ============ Workflow ============
+  async createWorkflow(data: InsertWorkflow): Promise<Workflow> {
+    const id = randomUUID();
+    const createdAt = this.now();
+    this.db.prepare(`
+      INSERT INTO workflows (id, title, description, status, createdBy, createdAt)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(id, data.title, data.description ?? null, data.status ?? "pending", data.createdBy ?? null, createdAt);
+    return { id, title: data.title, description: data.description ?? null, status: data.status ?? "pending", createdBy: data.createdBy ?? null, createdAt: new Date(createdAt), completedAt: null };
+  }
+
+  async getWorkflow(id: string): Promise<Workflow | undefined> {
+    const row = this.db.prepare("SELECT * FROM workflows WHERE id = ?").get(id) as any;
+    if (!row) return undefined;
+    return { ...row, createdAt: new Date(row.createdAt), completedAt: row.completedAt ? new Date(row.completedAt) : null };
+  }
+
+  async getAllWorkflows(): Promise<Workflow[]> {
+    const rows = this.db.prepare("SELECT * FROM workflows ORDER BY createdAt DESC LIMIT 50").all() as any[];
+    return rows.map(r => ({ ...r, createdAt: new Date(r.createdAt), completedAt: r.completedAt ? new Date(r.completedAt) : null }));
+  }
+
+  async updateWorkflow(id: string, data: Partial<InsertWorkflow & { completedAt: string }>): Promise<Workflow | undefined> {
+    const existing = this.db.prepare("SELECT * FROM workflows WHERE id = ?").get(id) as any;
+    if (!existing) return undefined;
+    const fields: string[] = [];
+    const values: any[] = [];
+    for (const [key, value] of Object.entries(data)) {
+      if (value !== undefined) { fields.push(`${key} = ?`); values.push(value); }
+    }
+    if (fields.length > 0) {
+      values.push(id);
+      this.db.prepare(`UPDATE workflows SET ${fields.join(", ")} WHERE id = ?`).run(...values);
+    }
+    return this.getWorkflow(id);
+  }
+
+  async deleteWorkflow(id: string): Promise<void> {
+    const del = this.db.transaction(() => {
+      const tasks = this.db.prepare("SELECT id FROM workflow_tasks WHERE workflowId = ?").all(id) as any[];
+      for (const t of tasks) {
+        this.db.prepare("DELETE FROM task_dependencies WHERE taskId = ? OR dependsOnTaskId = ?").run(t.id, t.id);
+      }
+      this.db.prepare("DELETE FROM workflow_tasks WHERE workflowId = ?").run(id);
+      this.db.prepare("DELETE FROM workflows WHERE id = ?").run(id);
+    });
+    del();
+  }
+
+  // ============ WorkflowTask ============
+  async createWorkflowTask(data: InsertWorkflowTask): Promise<WorkflowTask> {
+    const id = randomUUID();
+    const createdAt = this.now();
+    this.db.prepare(`
+      INSERT INTO workflow_tasks (id, workflowId, agentId, description, status, result, priority, suggestedRole, orderIndex, createdAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, data.workflowId, data.agentId ?? null, data.description, data.status ?? "pending", data.result ?? null, data.priority ?? "medium", data.suggestedRole ?? null, data.orderIndex ?? 0, createdAt);
+    return { id, workflowId: data.workflowId, agentId: data.agentId ?? null, description: data.description, status: data.status ?? "pending", result: data.result ?? null, priority: data.priority ?? "medium", suggestedRole: data.suggestedRole ?? null, orderIndex: data.orderIndex ?? 0, createdAt: new Date(createdAt), completedAt: null };
+  }
+
+  async getWorkflowTask(id: string): Promise<WorkflowTask | undefined> {
+    const row = this.db.prepare("SELECT * FROM workflow_tasks WHERE id = ?").get(id) as any;
+    if (!row) return undefined;
+    return { ...row, createdAt: new Date(row.createdAt), completedAt: row.completedAt ? new Date(row.completedAt) : null };
+  }
+
+  async getWorkflowTasks(workflowId: string): Promise<WorkflowTask[]> {
+    const rows = this.db.prepare("SELECT * FROM workflow_tasks WHERE workflowId = ? ORDER BY orderIndex ASC").all(workflowId) as any[];
+    return rows.map(r => ({ ...r, createdAt: new Date(r.createdAt), completedAt: r.completedAt ? new Date(r.completedAt) : null }));
+  }
+
+  async updateWorkflowTask(id: string, data: Partial<InsertWorkflowTask & { completedAt: string }>): Promise<WorkflowTask | undefined> {
+    const existing = this.db.prepare("SELECT * FROM workflow_tasks WHERE id = ?").get(id) as any;
+    if (!existing) return undefined;
+    const fields: string[] = [];
+    const values: any[] = [];
+    for (const [key, value] of Object.entries(data)) {
+      if (value !== undefined) { fields.push(`${key} = ?`); values.push(value); }
+    }
+    if (fields.length > 0) {
+      values.push(id);
+      this.db.prepare(`UPDATE workflow_tasks SET ${fields.join(", ")} WHERE id = ?`).run(...values);
+    }
+    return this.getWorkflowTask(id);
+  }
+
+  // ============ TaskDependency ============
+  async createTaskDependency(data: InsertTaskDependency): Promise<TaskDependency> {
+    const id = randomUUID();
+    this.db.prepare("INSERT INTO task_dependencies (id, taskId, dependsOnTaskId) VALUES (?, ?, ?)").run(id, data.taskId, data.dependsOnTaskId);
+    return { id, taskId: data.taskId, dependsOnTaskId: data.dependsOnTaskId };
+  }
+
+  async getTaskDependencies(taskId: string): Promise<TaskDependency[]> {
+    return this.db.prepare("SELECT * FROM task_dependencies WHERE taskId = ?").all(taskId) as TaskDependency[];
+  }
+
+  async getDependents(taskId: string): Promise<TaskDependency[]> {
+    return this.db.prepare("SELECT * FROM task_dependencies WHERE dependsOnTaskId = ?").all(taskId) as TaskDependency[];
+  }
+
+  // ============ AgentMemory ============
+  async createAgentMemory(data: InsertAgentMemory): Promise<AgentMemory> {
+    const id = randomUUID();
+    const createdAt = this.now();
+    this.db.prepare(`
+      INSERT INTO agent_memories (id, agentId, type, content, metadata, importance, accessCount, createdAt)
+      VALUES (?, ?, ?, ?, ?, ?, 0, ?)
+    `).run(id, data.agentId, data.type, data.content, data.metadata ?? null, data.importance ?? 0.5, createdAt);
+    // Also insert into FTS
+    try {
+      this.db.prepare("INSERT INTO agent_memories_fts (rowid, content) VALUES ((SELECT rowid FROM agent_memories WHERE id = ?), ?)").run(id, data.content);
+    } catch {}
+    return { id, agentId: data.agentId, type: data.type, content: data.content, metadata: data.metadata ?? null, importance: data.importance ?? 0.5, accessCount: 0, lastAccessedAt: null, createdAt: new Date(createdAt) };
+  }
+
+  async getAgentMemories(agentId: string, type?: string, limit = 20): Promise<AgentMemory[]> {
+    let query = "SELECT * FROM agent_memories WHERE agentId = ?";
+    const params: any[] = [agentId];
+    if (type) { query += " AND type = ?"; params.push(type); }
+    query += " ORDER BY importance DESC, createdAt DESC LIMIT ?";
+    params.push(limit);
+    const rows = this.db.prepare(query).all(...params) as any[];
+    return rows.map(r => ({ ...r, importance: r.importance, lastAccessedAt: r.lastAccessedAt ? new Date(r.lastAccessedAt) : null, createdAt: new Date(r.createdAt) }));
+  }
+
+  async searchAgentMemories(agentId: string, query: string, limit = 5): Promise<AgentMemory[]> {
+    try {
+      const rows = this.db.prepare(`
+        SELECT m.* FROM agent_memories m
+        JOIN agent_memories_fts fts ON fts.rowid = m.rowid
+        WHERE m.agentId = ? AND agent_memories_fts MATCH ?
+        ORDER BY rank
+        LIMIT ?
+      `).all(agentId, query, limit) as any[];
+      return rows.map(r => ({ ...r, lastAccessedAt: r.lastAccessedAt ? new Date(r.lastAccessedAt) : null, createdAt: new Date(r.createdAt) }));
+    } catch {
+      // Fallback to LIKE search if FTS fails
+      const rows = this.db.prepare(`
+        SELECT * FROM agent_memories WHERE agentId = ? AND content LIKE ?
+        ORDER BY importance DESC LIMIT ?
+      `).all(agentId, `%${query}%`, limit) as any[];
+      return rows.map(r => ({ ...r, lastAccessedAt: r.lastAccessedAt ? new Date(r.lastAccessedAt) : null, createdAt: new Date(r.createdAt) }));
+    }
+  }
+
+  async deleteAgentMemory(id: string): Promise<void> {
+    try {
+      this.db.prepare("INSERT INTO agent_memories_fts(agent_memories_fts, rowid, content) VALUES('delete', (SELECT rowid FROM agent_memories WHERE id = ?), (SELECT content FROM agent_memories WHERE id = ?))").run(id, id);
+    } catch {}
+    this.db.prepare("DELETE FROM agent_memories WHERE id = ?").run(id);
+  }
+
+  async clearAgentMemories(agentId: string): Promise<void> {
+    try {
+      const rows = this.db.prepare("SELECT rowid, content FROM agent_memories WHERE agentId = ?").all(agentId) as any[];
+      for (const r of rows) {
+        this.db.prepare("INSERT INTO agent_memories_fts(agent_memories_fts, rowid, content) VALUES('delete', ?, ?)").run(r.rowid, r.content);
+      }
+    } catch {}
+    this.db.prepare("DELETE FROM agent_memories WHERE agentId = ?").run(agentId);
+  }
+
+  async touchAgentMemory(id: string): Promise<void> {
+    this.db.prepare("UPDATE agent_memories SET accessCount = accessCount + 1, lastAccessedAt = ? WHERE id = ?").run(this.now(), id);
+  }
+
+  // ============ ToolPlugin ============
+  async createToolPlugin(data: InsertToolPlugin): Promise<ToolPlugin> {
+    const id = randomUUID();
+    const createdAt = this.now();
+    this.db.prepare(`
+      INSERT INTO tool_plugins (id, name, description, inputSchema, handlerPath, enabledRoles, isEnabled, createdAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, data.name, data.description ?? null, data.inputSchema, data.handlerPath, data.enabledRoles ?? null, data.isEnabled === false ? 0 : 1, createdAt);
+    return { id, name: data.name, description: data.description ?? null, inputSchema: data.inputSchema, handlerPath: data.handlerPath, enabledRoles: data.enabledRoles ?? null, isEnabled: data.isEnabled !== false, createdAt: new Date(createdAt) };
+  }
+
+  async getToolPlugin(id: string): Promise<ToolPlugin | undefined> {
+    const row = this.db.prepare("SELECT * FROM tool_plugins WHERE id = ?").get(id) as any;
+    if (!row) return undefined;
+    return { ...row, isEnabled: !!row.isEnabled, createdAt: new Date(row.createdAt) };
+  }
+
+  async getAllToolPlugins(): Promise<ToolPlugin[]> {
+    const rows = this.db.prepare("SELECT * FROM tool_plugins ORDER BY createdAt ASC").all() as any[];
+    return rows.map(r => ({ ...r, isEnabled: !!r.isEnabled, createdAt: new Date(r.createdAt) }));
+  }
+
+  async updateToolPlugin(id: string, data: Partial<InsertToolPlugin>): Promise<ToolPlugin | undefined> {
+    const existing = this.db.prepare("SELECT * FROM tool_plugins WHERE id = ?").get(id) as any;
+    if (!existing) return undefined;
+    const fields: string[] = [];
+    const values: any[] = [];
+    for (const [key, value] of Object.entries(data)) {
+      if (value !== undefined) {
+        if (key === "isEnabled") { fields.push("isEnabled = ?"); values.push(value ? 1 : 0); }
+        else { fields.push(`${key} = ?`); values.push(value); }
+      }
+    }
+    if (fields.length > 0) {
+      values.push(id);
+      this.db.prepare(`UPDATE tool_plugins SET ${fields.join(", ")} WHERE id = ?`).run(...values);
+    }
+    return this.getToolPlugin(id);
+  }
+
+  async deleteToolPlugin(id: string): Promise<void> {
+    this.db.prepare("DELETE FROM tool_plugins WHERE id = ?").run(id);
   }
 }

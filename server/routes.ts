@@ -7,6 +7,10 @@ import { createAgent, removeAgent, chatWithAgent, assignTask, broadcastTask, tri
 import { generateAgentAvatar } from "./image-gen";
 import { workspace } from "./workspace";
 import { createRoom, inviteAgent, removeAgentFromRoom, startDiscussion, closeRoom, reopenRoom, setMeetingBroadcast, addUserMessage, inviteAllAgents } from "./meetings";
+import { orchestrator } from "./orchestrator";
+import { memoryStore } from "./memory/memory-store";
+import { memoryPruner } from "./memory/memory-pruner";
+import { toolRegistry } from "./tools";
 
 const createAgentSchema = z.object({
   name: z.string().min(1, "이름이 필요합니다"),
@@ -415,6 +419,180 @@ export async function registerRoutes(
     try {
       await storage.deleteMeetingRoom(req.params.id);
       res.status(204).send();
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ═══════════════════════════════════════════════
+  // Workflow API
+  // ═══════════════════════════════════════════════
+
+  app.post("/api/workflows", async (req, res) => {
+    try {
+      const schema = z.object({
+        request: z.string().min(1, "요청 내용이 필요합니다"),
+      });
+      const parsed = schema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0].message });
+
+      // Start workflow async, return immediately
+      const resultPromise = orchestrator.executeWorkflow(parsed.data.request);
+      // Get workflow ID from the first status check
+      const status = await new Promise<any>((resolve) => {
+        const check = setInterval(async () => {
+          const workflows = await storage.getAllWorkflows();
+          const latest = workflows[0];
+          if (latest && latest.status === "running") {
+            clearInterval(check);
+            resolve(latest);
+          }
+        }, 100);
+        // Timeout after 5s
+        setTimeout(() => { clearInterval(check); resolve(null); }, 5000);
+      });
+
+      if (status) {
+        // Don't await - let it run in background
+        resultPromise.catch(console.error);
+        res.status(201).json({ workflowId: status.id, status: "running" });
+      } else {
+        // If we couldn't find the running workflow, still try
+        const result = await resultPromise;
+        res.status(201).json(result);
+      }
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get("/api/workflows", async (_req, res) => {
+    try {
+      const workflows = await storage.getAllWorkflows();
+      res.json(workflows);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get("/api/workflows/:id", async (req, res) => {
+    try {
+      const status = await orchestrator.getWorkflowStatus(req.params.id);
+      if (!status) return res.status(404).json({ error: "워크플로우를 찾을 수 없습니다" });
+      res.json(status);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/workflows/:id/cancel", async (req, res) => {
+    try {
+      await orchestrator.cancelWorkflow(req.params.id);
+      res.json({ message: "워크플로우가 취소되었습니다" });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.delete("/api/workflows/:id", async (req, res) => {
+    try {
+      await storage.deleteWorkflow(req.params.id);
+      res.status(204).send();
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ═══════════════════════════════════════════════
+  // Agent Memory API
+  // ═══════════════════════════════════════════════
+
+  app.get("/api/agents/:id/memories", async (req, res) => {
+    try {
+      const type = req.query.type as string | undefined;
+      const limit = parseInt(req.query.limit as string) || 50;
+      const memories = await storage.getAgentMemories(req.params.id, type, limit);
+      res.json(memories);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/agents/:id/memories", async (req, res) => {
+    try {
+      const schema = z.object({
+        type: z.enum(["knowledge", "episode", "preference"]).default("knowledge"),
+        content: z.string().min(1, "내용이 필요합니다"),
+        importance: z.number().min(0).max(1).default(0.5),
+      });
+      const parsed = schema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0].message });
+
+      const memory = await memoryStore.save({
+        agentId: req.params.id,
+        type: parsed.data.type,
+        content: parsed.data.content,
+        metadata: null,
+        importance: parsed.data.importance,
+      });
+      res.status(201).json(memory);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get("/api/agents/:id/memories/search", async (req, res) => {
+    try {
+      const q = req.query.q as string;
+      if (!q) return res.status(400).json({ error: "검색어가 필요합니다" });
+      const limit = parseInt(req.query.limit as string) || 10;
+      const results = await memoryStore.search(req.params.id, q, limit);
+      res.json(results);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.delete("/api/agents/:id/memories/:memId", async (req, res) => {
+    try {
+      await memoryStore.delete(req.params.memId);
+      res.status(204).send();
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/agents/:id/memories/prune", async (req, res) => {
+    try {
+      const result = await memoryPruner.prune(req.params.id);
+      res.json(result);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ═══════════════════════════════════════════════
+  // Tool Plugin API
+  // ═══════════════════════════════════════════════
+
+  app.get("/api/tools", async (_req, res) => {
+    try {
+      const tools = toolRegistry.getAllTools();
+      res.json(tools.map(t => ({
+        name: t.definition.name,
+        description: t.definition.description,
+        source: t.source,
+        roles: t.roles,
+      })));
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get("/api/plugins", async (_req, res) => {
+    try {
+      const plugins = await storage.getAllToolPlugins();
+      res.json(plugins);
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }

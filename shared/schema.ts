@@ -195,3 +195,111 @@ export const insertMeetingMessageSchema = z.object({
 });
 
 export type InsertMeetingMessage = z.infer<typeof insertMeetingMessageSchema>;
+
+// ============ Workflow ============
+export interface Workflow {
+  id: string;
+  title: string;
+  description: string | null;
+  status: string;
+  createdBy: string | null;
+  createdAt: Date;
+  completedAt: Date | null;
+}
+
+export const insertWorkflowSchema = z.object({
+  title: z.string().min(1),
+  description: z.string().nullable().default(null),
+  status: z.string().default("pending"),
+  createdBy: z.string().nullable().default(null),
+});
+
+export type InsertWorkflow = z.infer<typeof insertWorkflowSchema>;
+
+// ============ WorkflowTask ============
+export interface WorkflowTask {
+  id: string;
+  workflowId: string;
+  agentId: string | null;
+  description: string;
+  status: string;
+  result: string | null;
+  priority: string;
+  suggestedRole: string | null;
+  orderIndex: number;
+  createdAt: Date;
+  completedAt: Date | null;
+}
+
+export const insertWorkflowTaskSchema = z.object({
+  workflowId: z.string(),
+  agentId: z.string().nullable().default(null),
+  description: z.string().min(1),
+  status: z.string().default("pending"),
+  result: z.string().nullable().default(null),
+  priority: z.string().default("medium"),
+  suggestedRole: z.string().nullable().default(null),
+  orderIndex: z.number().default(0),
+});
+
+export type InsertWorkflowTask = z.infer<typeof insertWorkflowTaskSchema>;
+
+// ============ TaskDependency ============
+export interface TaskDependency {
+  id: string;
+  taskId: string;
+  dependsOnTaskId: string;
+}
+
+export const insertTaskDependencySchema = z.object({
+  taskId: z.string(),
+  dependsOnTaskId: z.string(),
+});
+
+export type InsertTaskDependency = z.infer<typeof insertTaskDependencySchema>;
+
+// ============ AgentMemory ============
+export interface AgentMemory {
+  id: string;
+  agentId: string;
+  type: string;
+  content: string;
+  metadata: string | null;
+  importance: number;
+  accessCount: number;
+  lastAccessedAt: Date | null;
+  createdAt: Date;
+}
+
+export const insertAgentMemorySchema = z.object({
+  agentId: z.string(),
+  type: z.enum(["knowledge", "episode", "preference"]),
+  content: z.string().min(1),
+  metadata: z.string().nullable().default(null),
+  importance: z.number().min(0).max(1).default(0.5),
+});
+
+export type InsertAgentMemory = z.infer<typeof insertAgentMemorySchema>;
+
+// ============ ToolPlugin ============
+export interface ToolPlugin {
+  id: string;
+  name: string;
+  description: string | null;
+  inputSchema: string;
+  handlerPath: string;
+  enabledRoles: string | null;
+  isEnabled: boolean;
+  createdAt: Date;
+}
+
+export const insertToolPluginSchema = z.object({
+  name: z.string().min(1),
+  description: z.string().nullable().default(null),
+  inputSchema: z.string(),
+  handlerPath: z.string(),
+  enabledRoles: z.string().nullable().default(null),
+  isEnabled: z.boolean().default(true),
+});
+
+export type InsertToolPlugin = z.infer<typeof insertToolPluginSchema>;

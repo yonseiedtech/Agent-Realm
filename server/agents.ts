@@ -1,11 +1,12 @@
-import { execSync } from "child_process";
 import fs from "fs";
 import path from "path";
 import { storage } from "./storage";
-import { workspace } from "./workspace";
-import { chatCompletion, continueWithToolResults, type ToolDefinition, type ChatMessage, type ChatResponse } from "./ai-client";
+import { chatCompletion, continueWithToolResults } from "./ai-client";
 import type { Agent } from "@shared/schema";
 import { generateAgentAvatar } from "./image-gen";
+import { contextBuilder } from "./memory/context-builder";
+import { episodicMemory } from "./memory/episodic-memory";
+import { toolRegistry } from "./tools";
 
 interface ConversationMessage {
   role: "user" | "assistant";
@@ -106,288 +107,7 @@ function getProjectContext(): string {
   }
 }
 
-function getTools(): ToolDefinition[] {
-  return [
-    {
-      name: "list_files",
-      description: "프로젝트 디렉토리의 파일 목록을 조회합니다",
-      input_schema: {
-        type: "object" as const,
-        properties: {
-          path: { type: "string", description: "조회할 디렉토리 경로 (기본: '.')" }
-        },
-        required: [],
-      },
-    },
-    {
-      name: "read_file",
-      description: "파일 내용을 읽습니다",
-      input_schema: {
-        type: "object" as const,
-        properties: {
-          path: { type: "string", description: "읽을 파일 경로" }
-        },
-        required: ["path"],
-      },
-    },
-    {
-      name: "write_file",
-      description: "파일에 내용을 작성합니다",
-      input_schema: {
-        type: "object" as const,
-        properties: {
-          path: { type: "string", description: "작성할 파일 경로" },
-          content: { type: "string", description: "파일 내용" }
-        },
-        required: ["path", "content"],
-      },
-    },
-    {
-      name: "send_message_to_agent",
-      description: "다른 에이전트에게 메시지를 보냅니다 (협업, 리뷰 요청 등)",
-      input_schema: {
-        type: "object" as const,
-        properties: {
-          to_agent_id: { type: "string", description: "메시지를 받을 에이전트 ID" },
-          message: { type: "string", description: "보낼 메시지 내용" },
-          message_type: { type: "string", enum: ["discussion", "suggestion", "request", "response"], description: "메시지 유형" }
-        },
-        required: ["to_agent_id", "message"],
-      },
-    },
-    {
-      name: "search_files",
-      description: "프로젝트 내 파일에서 텍스트/정규식 패턴을 검색합니다 (최대 50개 결과)",
-      input_schema: {
-        type: "object" as const,
-        properties: {
-          pattern: { type: "string", description: "검색할 텍스트 또는 정규식 패턴" },
-          path: { type: "string", description: "검색할 디렉토리 경로 (기본: '.')" },
-          file_pattern: { type: "string", description: "파일명 필터 (예: '*.ts', '*.tsx')" },
-        },
-        required: ["pattern"],
-      },
-    },
-    {
-      name: "edit_file",
-      description: "파일의 특정 줄 범위를 새 내용으로 교체합니다 (전체 덮어쓰기 대신 부분 편집)",
-      input_schema: {
-        type: "object" as const,
-        properties: {
-          path: { type: "string", description: "편집할 파일 경로" },
-          start_line: { type: "number", description: "시작 줄 번호 (1부터)" },
-          end_line: { type: "number", description: "끝 줄 번호" },
-          new_content: { type: "string", description: "대체할 새 내용" },
-        },
-        required: ["path", "start_line", "end_line", "new_content"],
-      },
-    },
-    {
-      name: "run_command",
-      description: "안전한 셸 명령을 실행합니다 (npm, npx, node, git, tsc, ls, cat, pwd 허용)",
-      input_schema: {
-        type: "object" as const,
-        properties: {
-          command: { type: "string", description: "실행할 명령어" },
-          timeout: { type: "number", description: "타임아웃 (밀리초, 기본 30000, 최대 60000)" },
-        },
-        required: ["command"],
-      },
-    },
-    {
-      name: "create_task",
-      description: "다른 에이전트에게 작업을 생성하고 할당합니다 (PM 역할에 최적)",
-      input_schema: {
-        type: "object" as const,
-        properties: {
-          agent_id: { type: "string", description: "작업을 할당할 에이전트 ID" },
-          description: { type: "string", description: "작업 설명" },
-          priority: { type: "string", enum: ["low", "medium", "high", "urgent"], description: "우선순위" },
-        },
-        required: ["agent_id", "description"],
-      },
-    },
-    {
-      name: "git_operations",
-      description: "Git 명령을 실행합니다 (status, diff, add, commit, log)",
-      input_schema: {
-        type: "object" as const,
-        properties: {
-          operation: { type: "string", enum: ["status", "diff", "add", "commit", "log"], description: "Git 명령" },
-          args: { type: "string", description: "추가 인자 (예: commit의 경우 메시지, add의 경우 파일 경로)" },
-        },
-        required: ["operation"],
-      },
-    },
-  ];
-}
-
-async function handleToolCall(agentId: string, toolName: string, input: any): Promise<string> {
-  switch (toolName) {
-    case "list_files": {
-      const files = await workspace.listFiles(input.path || ".");
-      return JSON.stringify(files, null, 2);
-    }
-    case "read_file": {
-      try {
-        const content = await workspace.readFile(input.path);
-        return content.length > 5000 ? content.substring(0, 5000) + "\n... (잘림)" : content;
-      } catch {
-        return `오류: 파일을 읽을 수 없습니다 - ${input.path}`;
-      }
-    }
-    case "write_file": {
-      try {
-        await workspace.writeFile(input.path, input.content, agentId);
-        await storage.createActivityLog({
-          agentId,
-          action: "file_write",
-          details: `파일 수정: ${input.path}`,
-          filePath: input.path,
-        });
-        emitEvent({
-          type: "activity",
-          data: { agentId, action: "file_write", filePath: input.path },
-        });
-        return `파일이 성공적으로 작성되었습니다: ${input.path}`;
-      } catch (e: any) {
-        return `오류: ${e.message}`;
-      }
-    }
-    case "send_message_to_agent": {
-      const msg = await storage.createAgentMessage({
-        fromAgentId: agentId,
-        toAgentId: input.to_agent_id,
-        content: input.message,
-        messageType: input.message_type || "discussion",
-      });
-      emitEvent({ type: "agent_message", data: msg });
-      return `메시지가 에이전트 #${input.to_agent_id}에게 전송되었습니다`;
-    }
-    case "search_files": {
-      try {
-        const results = await workspace.searchFiles(input.pattern, input.path || ".", input.file_pattern);
-        if (results.length === 0) return "검색 결과가 없습니다";
-        return results.map(r => `${r.file}:${r.line}: ${r.content}`).join("\n");
-      } catch (e: any) {
-        return `검색 오류: ${e.message}`;
-      }
-    }
-    case "edit_file": {
-      try {
-        const result = await workspace.editFile(input.path, input.start_line, input.end_line, input.new_content, agentId);
-        await storage.createActivityLog({
-          agentId,
-          action: "file_edit",
-          details: `파일 부분 수정: ${input.path} (${input.start_line}-${input.end_line}줄)`,
-          filePath: input.path,
-        });
-        emitEvent({
-          type: "activity",
-          data: { agentId, action: "file_edit", filePath: input.path },
-        });
-        return `파일이 성공적으로 편집되었습니다: ${input.path} (${result.linesChanged}줄 변경)`;
-      } catch (e: any) {
-        return `편집 오류: ${e.message}`;
-      }
-    }
-    case "run_command": {
-      const ALLOWED_COMMANDS = ["npm", "npx", "node", "git", "tsc", "ls", "cat", "pwd", "echo", "mkdir", "cp"];
-      const BLOCKED_PATTERNS = ["rm -rf", "sudo", "chmod", "> /", "| sh", "curl |", "wget |", "&& rm", "; rm"];
-      const cmd = input.command.trim();
-      const baseCmd = cmd.split(/\s+/)[0];
-      if (!ALLOWED_COMMANDS.includes(baseCmd)) {
-        return `차단됨: '${baseCmd}' 명령은 허용되지 않습니다. 허용: ${ALLOWED_COMMANDS.join(", ")}`;
-      }
-      for (const blocked of BLOCKED_PATTERNS) {
-        if (cmd.includes(blocked)) {
-          return `차단됨: 위험한 패턴 '${blocked}'이 감지되었습니다`;
-        }
-      }
-      try {
-        const timeout = Math.min(input.timeout || 30000, 60000);
-        const output = execSync(cmd, {
-          cwd: process.cwd(),
-          timeout,
-          encoding: "utf-8",
-          maxBuffer: 1024 * 1024,
-        });
-        await storage.createActivityLog({
-          agentId,
-          action: "command_run",
-          details: `명령 실행: ${cmd}`,
-          filePath: null,
-        });
-        emitEvent({
-          type: "activity",
-          data: { agentId, action: "command_run", details: cmd },
-        });
-        const trimmed = output.length > 3000 ? output.substring(0, 3000) + "\n... (잘림)" : output;
-        return trimmed || "(출력 없음)";
-      } catch (e: any) {
-        return `명령 실행 오류: ${e.stderr || e.message}`;
-      }
-    }
-    case "create_task": {
-      try {
-        const task = await storage.createTask({
-          agentId: input.agent_id,
-          description: input.description,
-          status: "pending",
-          filePath: null,
-          result: null,
-          assignedAgentId: input.agent_id,
-          priority: input.priority || "medium",
-        });
-        emitEvent({ type: "task_update", data: { ...task, priority: input.priority || "medium" } });
-        emitEvent({
-          type: "activity",
-          data: { agentId, action: "task_created", details: `에이전트 #${input.agent_id}에게 작업 할당: ${input.description}` },
-        });
-        // 자동으로 해당 에이전트에게 작업 실행 시작
-        assignTask(input.agent_id, input.description).catch(console.error);
-        return `작업이 에이전트 #${input.agent_id}에게 할당되었습니다: ${input.description}`;
-      } catch (e: any) {
-        return `작업 생성 오류: ${e.message}`;
-      }
-    }
-    case "git_operations": {
-      const op = input.operation;
-      const args = input.args || "";
-      let gitCmd: string;
-      switch (op) {
-        case "status": gitCmd = "git status"; break;
-        case "diff": gitCmd = `git diff ${args}`.trim(); break;
-        case "add": gitCmd = `git add ${args || "."}`.trim(); break;
-        case "commit": gitCmd = `git commit -m "${args.replace(/"/g, '\\"')}"`.trim(); break;
-        case "log": gitCmd = `git log --oneline -20 ${args}`.trim(); break;
-        default: return `알 수 없는 git 명령: ${op}`;
-      }
-      try {
-        const output = execSync(gitCmd, {
-          cwd: process.cwd(),
-          timeout: 15000,
-          encoding: "utf-8",
-        });
-        await storage.createActivityLog({
-          agentId,
-          action: "git_operation",
-          details: `Git: ${gitCmd}`,
-          filePath: null,
-        });
-        emitEvent({
-          type: "activity",
-          data: { agentId, action: "git_operation", details: gitCmd },
-        });
-        return output || "(출력 없음)";
-      } catch (e: any) {
-        return `Git 오류: ${e.stderr || e.message}`;
-      }
-    }
-    default:
-      return "알 수 없는 도구입니다";
-  }
-}
+// Tools are now managed by ToolRegistry (see server/tools/)
 
 export async function createAgent(name: string, role: string): Promise<Agent> {
   const existingAgents = await storage.getAllAgents();
@@ -453,7 +173,7 @@ export async function chatWithAgent(agentId: string, userMessage: string, attach
 
   const basePrompt = agent.systemPrompt || ROLE_SYSTEM_PROMPTS[agent.role] || ROLE_SYSTEM_PROMPTS.general;
   const projectContext = getProjectContext();
-  const systemPrompt = `${basePrompt}
+  const baseSystemPrompt = `${basePrompt}
 
 현재 당신의 정보:
 - 이름: ${agent.name}
@@ -465,16 +185,22 @@ ${agentListStr || "없음"}
 
 협업이 필요하면 send_message_to_agent 도구를 사용하세요.`;
 
+  // Enhance system prompt with memory context
+  const systemPrompt = await contextBuilder.buildContext(agentId, baseSystemPrompt, userMessage);
+
   await storage.updateAgent(agentId, { status: "working" });
   emitEvent({ type: "status_change", data: { agentId, status: "working" } });
 
   const recentConversation = conversation.slice(-20);
 
   try {
+    const startTime = Date.now();
+    const usedTools = new Set<string>();
+    const modifiedFiles = new Set<string>();
     const modelName = agent.model || "claude-sonnet-4-6";
     const maxTokens = agent.maxTokens || 4096;
     const temp = parseFloat(agent.temperature || "1");
-    const tools = getTools();
+    const tools = toolRegistry.getToolsForRole(agent.role);
 
     let response = await chatCompletion({
       model: modelName,
@@ -498,12 +224,18 @@ ${agentListStr || "없음"}
 
       const toolResults: Array<{ toolCallId: string; name: string; result: string }> = [];
       for (const toolCall of response.toolCalls) {
-        const result = await handleToolCall(agentId, toolCall.name, toolCall.input);
+        usedTools.add(toolCall.name);
+        const result = await toolRegistry.execute(toolCall.name, agentId, toolCall.input);
         toolResults.push({
           toolCallId: toolCall.id,
           name: toolCall.name,
           result,
         });
+
+        // Track file modifications
+        if (toolCall.name === "write_file" || toolCall.name === "edit_file") {
+          modifiedFiles.add((toolCall.input as any).path);
+        }
 
         if (toolCall.name === "read_file" || toolCall.name === "write_file") {
           await storage.updateAgent(agentId, { currentFile: (toolCall.input as any).path });
@@ -561,9 +293,13 @@ ${agentListStr || "없음"}
 
         const toolResults: Array<{ toolCallId: string; name: string; result: string }> = [];
         for (const toolCall of evalResponse.toolCalls) {
-          const result = await handleToolCall(agentId, toolCall.name, toolCall.input);
+          usedTools.add(toolCall.name);
+          const result = await toolRegistry.execute(toolCall.name, agentId, toolCall.input);
           toolResults.push({ toolCallId: toolCall.id, name: toolCall.name, result });
 
+          if (toolCall.name === "write_file" || toolCall.name === "edit_file") {
+            modifiedFiles.add((toolCall.input as any).path);
+          }
           if (toolCall.name === "read_file" || toolCall.name === "write_file") {
             await storage.updateAgent(agentId, { currentFile: (toolCall.input as any).path });
             emitEvent({ type: "status_change", data: { agentId, currentFile: (toolCall.input as any).path } });
@@ -603,6 +339,17 @@ ${agentListStr || "없음"}
       attachmentUrl: null,
       attachmentType: null,
     });
+
+    // Record episodic memory (non-blocking)
+    episodicMemory.recordEpisode(agentId, {
+      taskDescription: userMessage.substring(0, 200),
+      taskResult: fullResponse.substring(0, 500),
+      success: true,
+      toolsUsed: Array.from(usedTools),
+      filesModified: Array.from(modifiedFiles),
+      duration: Date.now() - startTime,
+      timestamp: new Date(),
+    }).catch(() => {});
 
     await storage.updateAgent(agentId, { status: "idle", currentFile: null });
     emitEvent({ type: "status_change", data: { agentId, status: "idle" } });

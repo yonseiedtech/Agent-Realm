@@ -8,6 +8,7 @@ import DetailPanel from "@/components/DetailPanel";
 import CommandPalette from "@/components/CommandPalette";
 import MeetingCenterPanel from "@/components/MeetingCenterPanel";
 import AgentChatPanel from "@/components/AgentChatPanel";
+import WorkflowBoard from "@/components/workflow/WorkflowBoard";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { useSound } from "@/hooks/useSound";
 import { useTTS } from "@/hooks/useTTS";
@@ -22,6 +23,7 @@ export default function Home() {
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [rightPanelOpen, setRightPanelOpen] = useState(true);
   const [activeMeetingRoomId, setActiveMeetingRoomId] = useState<string | null>(null);
+  const [activeWorkflowView, setActiveWorkflowView] = useState(false);
   const [chatPanelOpen, setChatPanelOpen] = useState(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const queryClient = useQueryClient();
@@ -47,6 +49,11 @@ export default function Home() {
         });
       }
 
+      // Workflow events
+      if (event.type.startsWith("workflow_")) {
+        queryClient.invalidateQueries({ queryKey: ["/api/workflows"] });
+      }
+
       switch (event.type) {
         case "agent_created":
           soundManager.agentCreated();
@@ -60,6 +67,12 @@ export default function Home() {
           break;
         case "status_change":
           if (event.data?.status === "working") soundManager.notification();
+          break;
+        case "workflow_completed":
+          soundManager.taskCompleted();
+          break;
+        case "workflow_failed":
+          soundManager.taskFailed();
           break;
       }
     },
@@ -152,6 +165,7 @@ export default function Home() {
         onSelectAgent={(id) => {
           handleSelectAgent(id);
           setActiveMeetingRoomId(null);
+          setActiveWorkflowView(false);
         }}
         connected={connected}
         muted={muted}
@@ -161,14 +175,25 @@ export default function Home() {
         onSelectMeetingRoom={(roomId) => {
           setActiveMeetingRoomId(roomId);
           setSelectedAgentId(null);
+          setActiveWorkflowView(false);
         }}
         activeMeetingRoomId={activeMeetingRoomId}
         onToggleChatPanel={() => setChatPanelOpen((v) => !v)}
         chatPanelOpen={chatPanelOpen}
+        onSelectWorkflow={() => {
+          setActiveWorkflowView(true);
+          setActiveMeetingRoomId(null);
+          setSelectedAgentId(null);
+        }}
+        activeWorkflowView={activeWorkflowView}
       />
 
-      {/* Center panel — Meeting or Agent chat */}
-      {activeMeetingRoomId ? (
+      {/* Center panel — Workflow, Meeting, or Agent chat */}
+      {activeWorkflowView ? (
+        <div className="flex-1 min-w-0">
+          <WorkflowBoard agents={agents} />
+        </div>
+      ) : activeMeetingRoomId ? (
         <MeetingCenterPanel
           roomId={activeMeetingRoomId}
           agents={agents}

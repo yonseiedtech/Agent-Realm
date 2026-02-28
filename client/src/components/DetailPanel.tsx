@@ -31,6 +31,7 @@ import {
   X,
   RefreshCw,
 } from "lucide-react";
+import MemoryInspector from "@/components/memory/MemoryInspector";
 import type { Agent, Task, ActivityLog, AgentMessage } from "@shared/schema";
 
 interface DetailPanelProps {
@@ -236,6 +237,13 @@ export default function DetailPanel({ agent, onClose }: DetailPanelProps) {
           >
             <Zap className="w-3.5 h-3.5 mr-1" />
             활동
+          </TabsTrigger>
+          <TabsTrigger
+            value="memory"
+            className="text-[11px] h-7 data-[state=active]:bg-[var(--dc-bg-modifier-active)] data-[state=active]:text-[var(--dc-text-primary)]"
+          >
+            <MessageSquare className="w-3.5 h-3.5 mr-1" />
+            메모리
           </TabsTrigger>
         </TabsList>
 
@@ -504,6 +512,11 @@ export default function DetailPanel({ agent, onClose }: DetailPanelProps) {
               })}
             </div>
           </ScrollArea>
+        </TabsContent>
+
+        {/* Memory tab */}
+        <TabsContent value="memory" className="flex-1 mt-0 overflow-auto">
+          <MemoryInspector agentId={agent.id} agentName={agent.name} />
         </TabsContent>
       </Tabs>
     </motion.div>
