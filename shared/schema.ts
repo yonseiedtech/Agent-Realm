@@ -22,6 +22,7 @@ export interface Agent {
   status: string;
   color: string;
   avatarType: string;
+  avatarUrl: string | null;
   currentTask: string | null;
   currentFile: string | null;
   systemPrompt: string | null;
@@ -37,6 +38,7 @@ export const insertAgentSchema = z.object({
   status: z.string().default("idle"),
   color: z.string().default("#5865F2"),
   avatarType: z.string().default("cat"),
+  avatarUrl: z.string().nullable().default(null),
   currentTask: z.string().nullable().default(null),
   currentFile: z.string().nullable().default(null),
   systemPrompt: z.string().nullable().default(null),
@@ -55,6 +57,8 @@ export interface Task {
   status: string;
   filePath: string | null;
   result: string | null;
+  assignedAgentId: string | null;
+  priority: string | null;
   createdAt: Date;
 }
 
@@ -64,6 +68,8 @@ export const insertTaskSchema = z.object({
   status: z.string().default("pending"),
   filePath: z.string().nullable().default(null),
   result: z.string().nullable().default(null),
+  assignedAgentId: z.string().nullable().default(null),
+  priority: z.string().nullable().default(null),
 });
 
 export type InsertTask = z.infer<typeof insertTaskSchema>;

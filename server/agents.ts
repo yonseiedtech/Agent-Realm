@@ -1,8 +1,11 @@
-import Anthropic from "@anthropic-ai/sdk";
+import { execSync } from "child_process";
+import fs from "fs";
+import path from "path";
 import { storage } from "./storage";
 import { workspace } from "./workspace";
-import { getAnthropicClient } from "./anthropic";
+import { chatCompletion, continueWithToolResults, type ToolDefinition, type ChatMessage, type ChatResponse } from "./ai-client";
 import type { Agent } from "@shared/schema";
+import { generateAgentAvatar } from "./image-gen";
 
 interface ConversationMessage {
   role: "user" | "assistant";
@@ -33,16 +36,25 @@ export function emitEvent(event: AgentEvent) {
 }
 
 const ROLE_SYSTEM_PROMPTS: Record<string, string> = {
-  frontend: `당신은 프론트엔드 개발 전문 AI 에이전트입니다. React, TypeScript, CSS, HTML에 능숙합니다.
-프로젝트의 프론트엔드 코드를 분석, 개선, 리팩토링할 수 있습니다.
+  pm: `당신은 프로젝트 매니저 AI 에이전트입니다. 작업 분배, 진행 관리, 팀 조율에 능숙합니다.
+팀원 에이전트들에게 작업을 할당하고 진행 상황을 추적합니다.
+create_task 도구를 사용하여 다른 에이전트에게 작업을 할당하세요.
 다른 에이전트와 협업하여 프로젝트를 개선하세요. 한국어로 응답하세요.
 파일을 읽거나 수정할 때는 반드시 도구를 사용하세요.`,
-  backend: `당신은 백엔드 개발 전문 AI 에이전트입니다. Node.js, Express, 데이터베이스, API 설계에 능숙합니다.
-프로젝트의 서버 코드를 분석, 개선, 리팩토링할 수 있습니다.
+  fullstack: `당신은 풀스택 개발 전문 AI 에이전트입니다. React, TypeScript, Node.js, Express, 데이터베이스, API 설계에 능숙합니다.
+프로젝트의 프론트엔드와 백엔드 코드를 분석, 개선, 리팩토링할 수 있습니다.
 다른 에이전트와 협업하여 프로젝트를 개선하세요. 한국어로 응답하세요.
 파일을 읽거나 수정할 때는 반드시 도구를 사용하세요.`,
-  testing: `당신은 테스팅 전문 AI 에이전트입니다. 코드 리뷰, 버그 발견, 테스트 케이스 작성에 능숙합니다.
+  designer: `당신은 UI/UX 디자이너 AI 에이전트입니다. 사용자 인터페이스, 스타일 가이드, CSS 디자인에 능숙합니다.
+프로젝트의 디자인과 사용자 경험을 개선합니다.
+다른 에이전트와 협업하여 프로젝트를 개선하세요. 한국어로 응답하세요.
+파일을 읽거나 수정할 때는 반드시 도구를 사용하세요.`,
+  tester: `당신은 테스팅 전문 AI 에이전트입니다. 코드 리뷰, 버그 발견, 테스트 케이스 작성에 능숙합니다.
 프로젝트의 코드 품질을 검증하고 개선 제안을 합니다.
+다른 에이전트와 협업하여 프로젝트를 개선하세요. 한국어로 응답하세요.`,
+  devops: `당신은 DevOps 전문 AI 에이전트입니다. 빌드, 배포, CI/CD, 인프라 관리에 능숙합니다.
+프로젝트의 빌드 설정, 배포 파이프라인, 환경 구성을 관리합니다.
+run_command와 git_operations 도구를 적극 활용하세요.
 다른 에이전트와 협업하여 프로젝트를 개선하세요. 한국어로 응답하세요.`,
   general: `당신은 범용 개발 AI 에이전트입니다. 풀스택 개발에 능숙합니다.
 프로젝트 코드를 분석하고 개선할 수 있습니다.
@@ -51,15 +63,50 @@ const ROLE_SYSTEM_PROMPTS: Record<string, string> = {
 };
 
 const AVATAR_COLORS: Record<string, string> = {
-  frontend: "#5865F2",
-  backend: "#57F287",
-  testing: "#FEE75C",
+  pm: "#FF6B6B",
+  fullstack: "#5865F2",
+  designer: "#FF79C6",
+  tester: "#FEE75C",
+  devops: "#BD93F9",
   general: "#ED4245",
 };
 
 const AVATAR_TYPES = ["developer", "designer", "analyst", "engineer", "architect", "researcher"];
 
-function getTools(): Anthropic.Tool[] {
+function getProjectContext(): string {
+  try {
+    const cwd = process.cwd();
+    const pkgPath = path.join(cwd, "package.json");
+    let context = "";
+    if (fs.existsSync(pkgPath)) {
+      const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
+      context += `프로젝트: ${pkg.name || "unknown"} v${pkg.version || "0.0.0"}\n`;
+      if (pkg.scripts) {
+        context += `스크립트: ${Object.keys(pkg.scripts).join(", ")}\n`;
+      }
+      const deps = Object.keys(pkg.dependencies || {}).slice(0, 15);
+      if (deps.length) context += `주요 의존성: ${deps.join(", ")}\n`;
+    }
+    // 디렉토리 구조 (1 depth)
+    try {
+      const entries = fs.readdirSync(cwd, { withFileTypes: true });
+      const dirs = entries
+        .filter(e => e.isDirectory() && !e.name.startsWith(".") && e.name !== "node_modules" && e.name !== "dist")
+        .map(e => e.name);
+      const files = entries
+        .filter(e => e.isFile() && !e.name.startsWith("."))
+        .map(e => e.name)
+        .slice(0, 10);
+      if (dirs.length) context += `디렉토리: ${dirs.join(", ")}\n`;
+      if (files.length) context += `루트 파일: ${files.join(", ")}\n`;
+    } catch {}
+    return context;
+  } catch {
+    return "";
+  }
+}
+
+function getTools(): ToolDefinition[] {
   return [
     {
       name: "list_files",
@@ -108,6 +155,70 @@ function getTools(): Anthropic.Tool[] {
         required: ["to_agent_id", "message"],
       },
     },
+    {
+      name: "search_files",
+      description: "프로젝트 내 파일에서 텍스트/정규식 패턴을 검색합니다 (최대 50개 결과)",
+      input_schema: {
+        type: "object" as const,
+        properties: {
+          pattern: { type: "string", description: "검색할 텍스트 또는 정규식 패턴" },
+          path: { type: "string", description: "검색할 디렉토리 경로 (기본: '.')" },
+          file_pattern: { type: "string", description: "파일명 필터 (예: '*.ts', '*.tsx')" },
+        },
+        required: ["pattern"],
+      },
+    },
+    {
+      name: "edit_file",
+      description: "파일의 특정 줄 범위를 새 내용으로 교체합니다 (전체 덮어쓰기 대신 부분 편집)",
+      input_schema: {
+        type: "object" as const,
+        properties: {
+          path: { type: "string", description: "편집할 파일 경로" },
+          start_line: { type: "number", description: "시작 줄 번호 (1부터)" },
+          end_line: { type: "number", description: "끝 줄 번호" },
+          new_content: { type: "string", description: "대체할 새 내용" },
+        },
+        required: ["path", "start_line", "end_line", "new_content"],
+      },
+    },
+    {
+      name: "run_command",
+      description: "안전한 셸 명령을 실행합니다 (npm, npx, node, git, tsc, ls, cat, pwd 허용)",
+      input_schema: {
+        type: "object" as const,
+        properties: {
+          command: { type: "string", description: "실행할 명령어" },
+          timeout: { type: "number", description: "타임아웃 (밀리초, 기본 30000, 최대 60000)" },
+        },
+        required: ["command"],
+      },
+    },
+    {
+      name: "create_task",
+      description: "다른 에이전트에게 작업을 생성하고 할당합니다 (PM 역할에 최적)",
+      input_schema: {
+        type: "object" as const,
+        properties: {
+          agent_id: { type: "string", description: "작업을 할당할 에이전트 ID" },
+          description: { type: "string", description: "작업 설명" },
+          priority: { type: "string", enum: ["low", "medium", "high", "urgent"], description: "우선순위" },
+        },
+        required: ["agent_id", "description"],
+      },
+    },
+    {
+      name: "git_operations",
+      description: "Git 명령을 실행합니다 (status, diff, add, commit, log)",
+      input_schema: {
+        type: "object" as const,
+        properties: {
+          operation: { type: "string", enum: ["status", "diff", "add", "commit", "log"], description: "Git 명령" },
+          args: { type: "string", description: "추가 인자 (예: commit의 경우 메시지, add의 경우 파일 경로)" },
+        },
+        required: ["operation"],
+      },
+    },
   ];
 }
 
@@ -153,6 +264,126 @@ async function handleToolCall(agentId: string, toolName: string, input: any): Pr
       emitEvent({ type: "agent_message", data: msg });
       return `메시지가 에이전트 #${input.to_agent_id}에게 전송되었습니다`;
     }
+    case "search_files": {
+      try {
+        const results = await workspace.searchFiles(input.pattern, input.path || ".", input.file_pattern);
+        if (results.length === 0) return "검색 결과가 없습니다";
+        return results.map(r => `${r.file}:${r.line}: ${r.content}`).join("\n");
+      } catch (e: any) {
+        return `검색 오류: ${e.message}`;
+      }
+    }
+    case "edit_file": {
+      try {
+        const result = await workspace.editFile(input.path, input.start_line, input.end_line, input.new_content, agentId);
+        await storage.createActivityLog({
+          agentId,
+          action: "file_edit",
+          details: `파일 부분 수정: ${input.path} (${input.start_line}-${input.end_line}줄)`,
+          filePath: input.path,
+        });
+        emitEvent({
+          type: "activity",
+          data: { agentId, action: "file_edit", filePath: input.path },
+        });
+        return `파일이 성공적으로 편집되었습니다: ${input.path} (${result.linesChanged}줄 변경)`;
+      } catch (e: any) {
+        return `편집 오류: ${e.message}`;
+      }
+    }
+    case "run_command": {
+      const ALLOWED_COMMANDS = ["npm", "npx", "node", "git", "tsc", "ls", "cat", "pwd", "echo", "mkdir", "cp"];
+      const BLOCKED_PATTERNS = ["rm -rf", "sudo", "chmod", "> /", "| sh", "curl |", "wget |", "&& rm", "; rm"];
+      const cmd = input.command.trim();
+      const baseCmd = cmd.split(/\s+/)[0];
+      if (!ALLOWED_COMMANDS.includes(baseCmd)) {
+        return `차단됨: '${baseCmd}' 명령은 허용되지 않습니다. 허용: ${ALLOWED_COMMANDS.join(", ")}`;
+      }
+      for (const blocked of BLOCKED_PATTERNS) {
+        if (cmd.includes(blocked)) {
+          return `차단됨: 위험한 패턴 '${blocked}'이 감지되었습니다`;
+        }
+      }
+      try {
+        const timeout = Math.min(input.timeout || 30000, 60000);
+        const output = execSync(cmd, {
+          cwd: process.cwd(),
+          timeout,
+          encoding: "utf-8",
+          maxBuffer: 1024 * 1024,
+        });
+        await storage.createActivityLog({
+          agentId,
+          action: "command_run",
+          details: `명령 실행: ${cmd}`,
+          filePath: null,
+        });
+        emitEvent({
+          type: "activity",
+          data: { agentId, action: "command_run", details: cmd },
+        });
+        const trimmed = output.length > 3000 ? output.substring(0, 3000) + "\n... (잘림)" : output;
+        return trimmed || "(출력 없음)";
+      } catch (e: any) {
+        return `명령 실행 오류: ${e.stderr || e.message}`;
+      }
+    }
+    case "create_task": {
+      try {
+        const task = await storage.createTask({
+          agentId: input.agent_id,
+          description: input.description,
+          status: "pending",
+          filePath: null,
+          result: null,
+          assignedAgentId: input.agent_id,
+          priority: input.priority || "medium",
+        });
+        emitEvent({ type: "task_update", data: { ...task, priority: input.priority || "medium" } });
+        emitEvent({
+          type: "activity",
+          data: { agentId, action: "task_created", details: `에이전트 #${input.agent_id}에게 작업 할당: ${input.description}` },
+        });
+        // 자동으로 해당 에이전트에게 작업 실행 시작
+        assignTask(input.agent_id, input.description).catch(console.error);
+        return `작업이 에이전트 #${input.agent_id}에게 할당되었습니다: ${input.description}`;
+      } catch (e: any) {
+        return `작업 생성 오류: ${e.message}`;
+      }
+    }
+    case "git_operations": {
+      const op = input.operation;
+      const args = input.args || "";
+      let gitCmd: string;
+      switch (op) {
+        case "status": gitCmd = "git status"; break;
+        case "diff": gitCmd = `git diff ${args}`.trim(); break;
+        case "add": gitCmd = `git add ${args || "."}`.trim(); break;
+        case "commit": gitCmd = `git commit -m "${args.replace(/"/g, '\\"')}"`.trim(); break;
+        case "log": gitCmd = `git log --oneline -20 ${args}`.trim(); break;
+        default: return `알 수 없는 git 명령: ${op}`;
+      }
+      try {
+        const output = execSync(gitCmd, {
+          cwd: process.cwd(),
+          timeout: 15000,
+          encoding: "utf-8",
+        });
+        await storage.createActivityLog({
+          agentId,
+          action: "git_operation",
+          details: `Git: ${gitCmd}`,
+          filePath: null,
+        });
+        emitEvent({
+          type: "activity",
+          data: { agentId, action: "git_operation", details: gitCmd },
+        });
+        return output || "(출력 없음)";
+      } catch (e: any) {
+        return `Git 오류: ${e.stderr || e.message}`;
+      }
+    }
     default:
       return "알 수 없는 도구입니다";
   }
@@ -175,6 +406,17 @@ export async function createAgent(name: string, role: string): Promise<Agent> {
     temperature: "1",
   });
   emitEvent({ type: "agent_created", data: agent });
+
+  // Async avatar generation (non-blocking)
+  generateAgentAvatar(agent.id, agent.name, agent.role)
+    .then(async (avatarUrl) => {
+      if (avatarUrl) {
+        await storage.updateAgent(agent.id, { avatarUrl } as any);
+        emitEvent({ type: "status_change", data: { agentId: agent.id, avatarUrl } });
+      }
+    })
+    .catch((err) => console.error("[agents] Avatar generation failed:", err.message));
+
   return agent;
 }
 
@@ -210,6 +452,7 @@ export async function chatWithAgent(agentId: string, userMessage: string, attach
   const agentListStr = otherAgents.map(a => `- #${a.id} ${a.name} (${a.role}): ${a.status}`).join("\n");
 
   const basePrompt = agent.systemPrompt || ROLE_SYSTEM_PROMPTS[agent.role] || ROLE_SYSTEM_PROMPTS.general;
+  const projectContext = getProjectContext();
   const systemPrompt = `${basePrompt}
 
 현재 당신의 정보:
@@ -217,7 +460,7 @@ export async function chatWithAgent(agentId: string, userMessage: string, attach
 - 역할: ${agent.role}
 - ID: ${agent.id}
 
-팀원 에이전트:
+${projectContext ? `프로젝트 컨텍스트:\n${projectContext}\n` : ""}팀원 에이전트:
 ${agentListStr || "없음"}
 
 협업이 필요하면 send_message_to_agent 도구를 사용하세요.`;
@@ -228,17 +471,17 @@ ${agentListStr || "없음"}
   const recentConversation = conversation.slice(-20);
 
   try {
-    const anthropic = await getAnthropicClient();
     const modelName = agent.model || "claude-sonnet-4-6";
     const maxTokens = agent.maxTokens || 4096;
     const temp = parseFloat(agent.temperature || "1");
+    const tools = getTools();
 
-    let response = await anthropic.messages.create({
+    let response = await chatCompletion({
       model: modelName,
-      max_tokens: maxTokens,
+      maxTokens,
       temperature: temp,
       system: systemPrompt,
-      tools: getTools(),
+      tools,
       messages: recentConversation.map(m => ({ role: m.role, content: m.content })),
     });
 
@@ -246,44 +489,112 @@ ${agentListStr || "없음"}
     let iterations = 0;
     const maxIterations = 5;
 
-    while (response.stop_reason === "tool_use" && iterations < maxIterations) {
+    while (response.stopReason === "tool_use" && response.toolCalls && iterations < maxIterations) {
       iterations++;
-      const toolUseBlocks = response.content.filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
-      const textBlocks = response.content.filter((b): b is Anthropic.TextBlock => b.type === "text");
-      if (textBlocks.length > 0) {
-        fullResponse += textBlocks.map(b => b.text).join("");
+
+      if (response.content) {
+        fullResponse += response.content;
       }
 
-      const toolResults: Anthropic.ToolResultBlockParam[] = [];
-      for (const toolBlock of toolUseBlocks) {
-        const result = await handleToolCall(agentId, toolBlock.name, toolBlock.input);
+      const toolResults: Array<{ toolCallId: string; name: string; result: string }> = [];
+      for (const toolCall of response.toolCalls) {
+        const result = await handleToolCall(agentId, toolCall.name, toolCall.input);
         toolResults.push({
-          type: "tool_result",
-          tool_use_id: toolBlock.id,
-          content: result,
+          toolCallId: toolCall.id,
+          name: toolCall.name,
+          result,
         });
 
-        if (toolBlock.name === "read_file" || toolBlock.name === "write_file") {
-          await storage.updateAgent(agentId, { currentFile: (toolBlock.input as any).path });
-          emitEvent({ type: "status_change", data: { agentId, currentFile: (toolBlock.input as any).path } });
+        if (toolCall.name === "read_file" || toolCall.name === "write_file") {
+          await storage.updateAgent(agentId, { currentFile: (toolCall.input as any).path });
+          emitEvent({ type: "status_change", data: { agentId, currentFile: (toolCall.input as any).path } });
         }
       }
 
-      recentConversation.push({ role: "assistant", content: JSON.stringify(response.content) });
-      recentConversation.push({ role: "user", content: JSON.stringify(toolResults) });
-
-      response = await anthropic.messages.create({
+      response = await continueWithToolResults({
         model: modelName,
-        max_tokens: maxTokens,
+        maxTokens,
         temperature: temp,
         system: systemPrompt,
-        tools: getTools(),
+        tools,
         messages: recentConversation.map(m => ({ role: m.role, content: m.content })),
+        toolResults,
+        previousResponse: response,
       });
     }
 
-    const finalTextBlocks = response.content.filter((b): b is Anthropic.TextBlock => b.type === "text");
-    fullResponse += finalTextBlocks.map(b => b.text).join("");
+    fullResponse += response.content || "";
+
+    // ─── Self-evaluation loop ─────────────────────────────────────
+    // After the initial response, ask the agent to evaluate whether
+    // its answer is complete. If not, it can do additional work.
+    const maxEvalRounds = 2;
+    for (let evalRound = 0; evalRound < maxEvalRounds; evalRound++) {
+      const evalMessages = [
+        ...recentConversation.map(m => ({ role: m.role, content: m.content })),
+        { role: "assistant" as const, content: fullResponse },
+        {
+          role: "user" as const,
+          content: `[시스템] 위 답변을 스스로 평가해주세요.
+- 사용자의 질문/요청에 충분히 답변했는가?
+- 빠진 내용이나 보완할 점이 있는가?
+- 추가로 파일을 확인하거나 작업이 필요한가?
+
+충분하다면 "[COMPLETE]"로 시작하여 짧은 확인만 해주세요.
+부족하다면 보완한 최종 답변을 작성해주세요. 필요시 도구를 사용할 수 있습니다.`,
+        },
+      ];
+
+      let evalResponse = await chatCompletion({
+        model: modelName,
+        maxTokens,
+        temperature: temp,
+        system: systemPrompt,
+        tools,
+        messages: evalMessages,
+      });
+
+      // Handle tool calls during self-evaluation
+      let evalIterations = 0;
+      while (evalResponse.stopReason === "tool_use" && evalResponse.toolCalls && evalIterations < 3) {
+        evalIterations++;
+
+        const toolResults: Array<{ toolCallId: string; name: string; result: string }> = [];
+        for (const toolCall of evalResponse.toolCalls) {
+          const result = await handleToolCall(agentId, toolCall.name, toolCall.input);
+          toolResults.push({ toolCallId: toolCall.id, name: toolCall.name, result });
+
+          if (toolCall.name === "read_file" || toolCall.name === "write_file") {
+            await storage.updateAgent(agentId, { currentFile: (toolCall.input as any).path });
+            emitEvent({ type: "status_change", data: { agentId, currentFile: (toolCall.input as any).path } });
+          }
+        }
+
+        evalResponse = await continueWithToolResults({
+          model: modelName,
+          maxTokens,
+          temperature: temp,
+          system: systemPrompt,
+          tools,
+          messages: evalMessages,
+          toolResults,
+          previousResponse: evalResponse,
+        });
+      }
+
+      const evalContent = evalResponse.content || "";
+
+      // If the agent says [COMPLETE], the answer is sufficient — stop
+      if (evalContent.trim().startsWith("[COMPLETE]")) {
+        break;
+      }
+
+      // Otherwise, replace with the refined answer and optionally loop again
+      if (evalContent.trim().length > 0) {
+        fullResponse = evalContent;
+      }
+    }
+    // ─── End self-evaluation loop ─────────────────────────────────
 
     await storage.createChatMessage({
       agentId,
@@ -311,6 +622,8 @@ export async function assignTask(agentId: string, description: string): Promise<
     status: "in-progress",
     filePath: null,
     result: null,
+    assignedAgentId: agentId,
+    priority: null,
   });
 
   await storage.updateAgent(agentId, { currentTask: description, status: "working" });

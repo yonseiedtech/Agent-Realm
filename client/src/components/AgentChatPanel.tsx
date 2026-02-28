@@ -42,24 +42,24 @@ export default function AgentChatPanel({ agents }: AgentChatPanelProps) {
 
   return (
     <div data-testid="agent-chat-panel" className="h-full flex flex-col">
-      <div className="px-4 py-3 border-b border-[#40444B] flex items-center gap-2">
-        <MessageSquare className="w-4 h-4 text-[#5865F2]" />
-        <span className="text-sm font-semibold text-white">에이전트 간 대화</span>
+      <div className="px-4 py-3 flex items-center gap-2" style={{ borderBottom: "1px solid var(--dc-border-subtle)" }}>
+        <MessageSquare className="w-4 h-4" style={{ color: "#5865F2" }} />
+        <span className="text-sm font-semibold" style={{ color: "var(--dc-text-primary)" }}>에이전트 간 대화</span>
       </div>
       <ScrollArea className="flex-1">
         <div className="p-3 space-y-3">
           {sorted.length === 0 && (
-            <div className="text-center text-gray-500 text-xs py-8">
+            <div className="text-center text-xs py-8" style={{ color: "var(--dc-text-muted)" }}>
               에이전트 간 대화가 아직 없습니다
             </div>
           )}
           {sorted.map((msg) => (
-            <div key={msg.id} className="rounded-lg bg-[#36393F] p-3">
+            <div key={msg.id} className="rounded-xl p-3" style={{ background: "var(--dc-bg-secondary)", boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
               <div className="flex items-center gap-2 mb-1">
                 <img src={getAgentImage(msg.fromAgentId)} alt="" className="w-5 h-5 rounded-full object-cover" />
-                <span className="text-xs font-semibold text-white">{getAgentName(msg.fromAgentId)}</span>
-                <span className="text-xs text-gray-500">→</span>
-                <span className="text-xs text-gray-400">
+                <span className="text-xs font-semibold" style={{ color: "var(--dc-text-primary)" }}>{getAgentName(msg.fromAgentId)}</span>
+                <span className="text-xs" style={{ color: "var(--dc-text-muted)" }}>→</span>
+                <span className="text-xs" style={{ color: "var(--dc-text-secondary)" }}>
                   {msg.toAgentId ? getAgentName(msg.toAgentId) : "전체"}
                 </span>
                 <span
@@ -72,8 +72,8 @@ export default function AgentChatPanel({ agents }: AgentChatPanelProps) {
                   {messageTypeLabels[msg.messageType] || msg.messageType}
                 </span>
               </div>
-              <div className="text-xs text-gray-300 whitespace-pre-wrap">{msg.content}</div>
-              <div className="text-[10px] text-gray-600 mt-1">
+              <div className="text-xs whitespace-pre-wrap leading-relaxed" style={{ color: "var(--dc-text-secondary)" }}>{msg.content}</div>
+              <div className="text-[10px] mt-1" style={{ color: "var(--dc-text-muted)" }}>
                 {new Date(msg.createdAt).toLocaleTimeString("ko-KR")}
               </div>
             </div>

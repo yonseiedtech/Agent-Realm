@@ -4,17 +4,18 @@ import { WebSocketServer, WebSocket } from "ws";
 import { z } from "zod";
 import { storage } from "./storage";
 import { createAgent, removeAgent, chatWithAgent, assignTask, broadcastTask, triggerInterAgentDiscussion, onAgentEvent } from "./agents";
+import { generateAgentAvatar } from "./image-gen";
 import { workspace } from "./workspace";
-import { createRoom, inviteAgent, removeAgentFromRoom, startDiscussion, closeRoom, setMeetingBroadcast, addUserMessage, inviteAllAgents } from "./meetings";
+import { createRoom, inviteAgent, removeAgentFromRoom, startDiscussion, closeRoom, reopenRoom, setMeetingBroadcast, addUserMessage, inviteAllAgents } from "./meetings";
 
 const createAgentSchema = z.object({
   name: z.string().min(1, "이름이 필요합니다"),
-  role: z.enum(["pm", "frontend", "backend", "designer", "tester", "devops", "general"]).default("general"),
+  role: z.enum(["pm", "fullstack", "designer", "tester", "devops", "general"]).default("general"),
 });
 
 const updateAgentSchema = z.object({
   name: z.string().min(1).optional(),
-  role: z.enum(["pm", "frontend", "backend", "designer", "tester", "devops", "general"]).optional(),
+  role: z.enum(["pm", "fullstack", "designer", "tester", "devops", "general"]).optional(),
   status: z.enum(["idle", "working", "paused"]).optional(),
   systemPrompt: z.string().nullable().optional(),
   model: z.string().optional(),
@@ -26,6 +27,15 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
+  // Load workspace path from settings on startup
+  try {
+    const allSettings = await storage.getAllSettings();
+    const wpSetting = allSettings.find(s => s.key === "workspace_path");
+    if (wpSetting && wpSetting.value) {
+      workspace.setBasePath(wpSetting.value);
+    }
+  } catch {}
+
   const wss = new WebSocketServer({ server: httpServer, path: "/ws" });
   const clients = new Set<WebSocket>();
 
@@ -118,6 +128,19 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/agents/:id/generate-avatar", async (req, res) => {
+    try {
+      const agent = await storage.getAgent(req.params.id);
+      if (!agent) return res.status(404).json({ error: "에이전트를 찾을 수 없습니다" });
+      const avatarUrl = await generateAgentAvatar(agent.id, agent.name, agent.role);
+      if (!avatarUrl) return res.status(500).json({ error: "이미지 생성에 실패했습니다" });
+      await storage.updateAgent(agent.id, { avatarUrl } as any);
+      res.json({ avatarUrl });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   app.get("/api/settings", async (_req, res) => {
     try {
       const allSettings = await storage.getAllSettings();
@@ -134,6 +157,13 @@ export async function registerRoutes(
       const entries = Object.entries(req.body) as [string, string][];
       for (const [key, value] of entries) {
         await storage.setSetting(key, value);
+      }
+      // Apply workspace path change immediately
+      if (req.body.workspace_path !== undefined) {
+        const wp = req.body.workspace_path as string;
+        if (wp.trim()) {
+          workspace.setBasePath(wp.trim());
+        }
       }
       res.json({ message: "설정이 저장되었습니다" });
     } catch (e: any) {
@@ -228,6 +258,10 @@ export async function registerRoutes(
   app.get("/api/activities", async (_req, res) => {
     const logs = await storage.getActivityLogs(50);
     res.json(logs);
+  });
+
+  app.get("/api/workspace/path", (_req, res) => {
+    res.json({ path: workspace.getBasePath() });
   });
 
   app.post("/api/workspace/files", async (req, res) => {
@@ -359,12 +393,30 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/meetings/:id/reopen", async (req, res) => {
+    try {
+      await reopenRoom(req.params.id);
+      res.json({ message: "회의가 재개되었습니다" });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
   app.post("/api/meetings/:id/close", async (req, res) => {
     try {
       await closeRoom(req.params.id);
       res.json({ message: "회의가 종료되었습니다" });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
+    }
+  });
+
+  app.delete("/api/meetings/:id", async (req, res) => {
+    try {
+      await storage.deleteMeetingRoom(req.params.id);
+      res.status(204).send();
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
     }
   });
 

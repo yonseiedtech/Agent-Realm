@@ -197,7 +197,99 @@ export async function addUserMessage(roomId: string, content: string) {
     },
   });
 
+  // Agents automatically respond to user messages (1 round)
+  respondToUserMessage(roomId, room, content).catch(console.error);
+
   return meetingMsg;
+}
+
+/**
+ * After a user sends a message, each participant agent responds once.
+ */
+async function respondToUserMessage(roomId: string, room: MeetingRoom, userContent: string) {
+  const participants = await storage.getRoomParticipants(roomId);
+  if (participants.length === 0) return;
+
+  const agents: Agent[] = [];
+  for (const p of participants) {
+    const agent = await storage.getAgent(p.agentId);
+    if (agent) agents.push(agent);
+  }
+  if (agents.length === 0) return;
+
+  for (const agent of agents) {
+    const latestMessages = await storage.getMeetingMessages(roomId);
+    const latestContext = latestMessages.map(msg => {
+      if (msg.agentId === "user") {
+        return `[사용자]: ${msg.content}`;
+      }
+      const a = agents.find(x => x.id === msg.agentId);
+      return `[${a?.name || msg.agentId} (${a?.role || "unknown"})]: ${msg.content}`;
+    }).join("\n\n");
+
+    const systemPrompt = agent.systemPrompt || getDefaultSystemPrompt(agent.role);
+
+    const fullSystemPrompt = `${systemPrompt}
+
+현재 당신의 정보:
+- 이름: ${agent.name}
+- 역할: ${agent.role}
+- ID: ${agent.id}
+
+회의실: ${room.name}
+${room.topic ? `회의 주제: ${room.topic}` : ""}
+
+참가 에이전트:
+${agents.map(a => `- ${a.name} (${a.role})`).join("\n")}
+
+사용자가 회의에 직접 메시지를 보냈습니다. 간결하게 응답하세요.`;
+
+    const userMessage = `이전 대화:\n${latestContext}\n\n사용자가 방금 이렇게 말했습니다: "${userContent}"\n\n당신의 전문 분야 관점에서 간결하게 응답해주세요.`;
+
+    try {
+      const model = agent.model || "claude-sonnet-4-6";
+      const maxTokens = agent.maxTokens || 4096;
+      const temperature = parseFloat(agent.temperature || "1");
+
+      const response = await chatCompletion({
+        model,
+        maxTokens,
+        temperature,
+        system: fullSystemPrompt,
+        messages: [{ role: "user", content: userMessage }],
+      });
+
+      const meetingMsg = await storage.createMeetingMessage({
+        roomId,
+        agentId: agent.id,
+        content: response.content,
+      });
+
+      broadcastFn({
+        type: "meeting_message",
+        data: {
+          ...meetingMsg,
+          agentName: agent.name,
+          agentRole: agent.role,
+        },
+      });
+    } catch (error: any) {
+      const errorMsg = await storage.createMeetingMessage({
+        roomId,
+        agentId: agent.id,
+        content: `[오류] 응답 생성 실패: ${error.message}`,
+      });
+
+      broadcastFn({
+        type: "meeting_message",
+        data: {
+          ...errorMsg,
+          agentName: agent.name,
+          agentRole: agent.role,
+        },
+      });
+    }
+  }
 }
 
 export async function inviteAllAgents(roomId: string) {
@@ -218,6 +310,18 @@ export async function inviteAllAgents(roomId: string) {
   }
 
   return added;
+}
+
+export async function reopenRoom(roomId: string) {
+  const room = await storage.getMeetingRoom(roomId);
+  if (!room) throw new Error("회의실을 찾을 수 없습니다");
+
+  await storage.reopenMeetingRoom(roomId);
+
+  broadcastFn({
+    type: "meeting_reopened",
+    data: { roomId },
+  });
 }
 
 export async function closeRoom(roomId: string) {

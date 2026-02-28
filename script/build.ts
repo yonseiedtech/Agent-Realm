@@ -9,11 +9,13 @@ const allowlist = [
   "cors",
   "date-fns",
   "express",
-  "firebase-admin",
   "ws",
   "zod",
   "zod-validation-error",
 ];
+
+// Native modules must always be external (not bundled)
+const nativeExternals = ["better-sqlite3"];
 
 async function buildAll() {
   await rm("dist", { recursive: true, force: true });
@@ -27,7 +29,10 @@ async function buildAll() {
     ...Object.keys(pkg.dependencies || {}),
     ...Object.keys(pkg.devDependencies || {}),
   ];
-  const externals = allDeps.filter((dep) => !allowlist.includes(dep));
+  const externals = [
+    ...allDeps.filter((dep) => !allowlist.includes(dep)),
+    ...nativeExternals,
+  ];
 
   await esbuild({
     entryPoints: ["server/index.ts"],

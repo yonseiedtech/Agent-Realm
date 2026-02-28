@@ -45,6 +45,7 @@ export interface IStorage {
   getMeetingRoom(id: string): Promise<MeetingRoom | undefined>;
   getAllMeetingRooms(): Promise<MeetingRoom[]>;
   closeMeetingRoom(id: string): Promise<void>;
+  reopenMeetingRoom(id: string): Promise<void>;
 
   addParticipant(data: InsertMeetingParticipant): Promise<MeetingParticipant>;
   removeParticipant(roomId: string, agentId: string): Promise<void>;
@@ -54,6 +55,6 @@ export interface IStorage {
   getMeetingMessages(roomId: string): Promise<MeetingMessage[]>;
 }
 
-import { FirestoreStorage } from "./firestore-storage";
+import { SqliteStorage } from "./sqlite-storage";
 
-export const storage = new FirestoreStorage();
+export const storage: IStorage = new SqliteStorage();

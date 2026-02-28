@@ -137,15 +137,23 @@ export class FirestoreStorage implements IStorage {
   }
 
   async getTasksByAgent(agentId: string): Promise<Task[]> {
-    const snap = await this.db.collection("tasks")
-      .where("agentId", "==", agentId)
-      .orderBy("createdAt", "desc")
-      .get();
-    return snap.docs.map(doc => ({
+    let snap;
+    try {
+      snap = await this.db.collection("tasks")
+        .where("agentId", "==", agentId)
+        .orderBy("createdAt", "desc")
+        .get();
+    } catch {
+      snap = await this.db.collection("tasks")
+        .where("agentId", "==", agentId)
+        .get();
+    }
+    const results = snap.docs.map(doc => ({
       id: doc.id,
       ...doc.data(),
       createdAt: toDate(doc.data().createdAt),
     } as Task));
+    return results.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
   }
 
   async createTask(task: InsertTask): Promise<Task> {
@@ -167,19 +175,23 @@ export class FirestoreStorage implements IStorage {
   // ============ AgentMessage ============
   async getAgentMessages(agentId?: string): Promise<AgentMessage[]> {
     if (agentId) {
-      // Firestore doesn't support OR queries across different fields natively,
-      // so we run two queries and merge
+      const queryWithFallback = async (field: string, value: string) => {
+        try {
+          return await this.db.collection("agentMessages")
+            .where(field, "==", value)
+            .orderBy("createdAt", "desc")
+            .limit(100)
+            .get();
+        } catch {
+          return await this.db.collection("agentMessages")
+            .where(field, "==", value)
+            .limit(100)
+            .get();
+        }
+      };
       const [fromSnap, toSnap] = await Promise.all([
-        this.db.collection("agentMessages")
-          .where("fromAgentId", "==", agentId)
-          .orderBy("createdAt", "desc")
-          .limit(100)
-          .get(),
-        this.db.collection("agentMessages")
-          .where("toAgentId", "==", agentId)
-          .orderBy("createdAt", "desc")
-          .limit(100)
-          .get(),
+        queryWithFallback("fromAgentId", agentId),
+        queryWithFallback("toAgentId", agentId),
       ]);
 
       const map = new Map<string, AgentMessage>();
@@ -235,15 +247,24 @@ export class FirestoreStorage implements IStorage {
 
   // ============ ChatHistory ============
   async getChatHistory(agentId: string): Promise<ChatHistory[]> {
-    const snap = await this.db.collection("chatHistory")
-      .where("agentId", "==", agentId)
-      .orderBy("createdAt", "asc")
-      .get();
-    return snap.docs.map(doc => ({
+    let snap;
+    try {
+      snap = await this.db.collection("chatHistory")
+        .where("agentId", "==", agentId)
+        .orderBy("createdAt", "asc")
+        .get();
+    } catch {
+      // Fallback if composite index is missing — fetch without orderBy, sort in memory
+      snap = await this.db.collection("chatHistory")
+        .where("agentId", "==", agentId)
+        .get();
+    }
+    const results = snap.docs.map(doc => ({
       id: doc.id,
       ...doc.data(),
       createdAt: toDate(doc.data().createdAt),
     } as ChatHistory));
+    return results.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
   }
 
   async createChatMessage(msg: InsertChatHistory): Promise<ChatHistory> {
@@ -306,6 +327,10 @@ export class FirestoreStorage implements IStorage {
     await this.db.collection("meetingRooms").doc(id).update({ status: "closed" });
   }
 
+  async reopenMeetingRoom(id: string): Promise<void> {
+    await this.db.collection("meetingRooms").doc(id).update({ status: "active" });
+  }
+
   // ============ MeetingParticipant ============
   async addParticipant(data: InsertMeetingParticipant): Promise<MeetingParticipant> {
     const docData = { ...data, joinedAt: FieldValue.serverTimestamp() };
@@ -342,14 +367,22 @@ export class FirestoreStorage implements IStorage {
   }
 
   async getMeetingMessages(roomId: string): Promise<MeetingMessage[]> {
-    const snap = await this.db.collection("meetingMessages")
-      .where("roomId", "==", roomId)
-      .orderBy("createdAt", "asc")
-      .get();
-    return snap.docs.map(doc => ({
+    let snap;
+    try {
+      snap = await this.db.collection("meetingMessages")
+        .where("roomId", "==", roomId)
+        .orderBy("createdAt", "asc")
+        .get();
+    } catch {
+      snap = await this.db.collection("meetingMessages")
+        .where("roomId", "==", roomId)
+        .get();
+    }
+    const results = snap.docs.map(doc => ({
       id: doc.id,
       ...doc.data(),
       createdAt: toDate(doc.data().createdAt),
     } as MeetingMessage));
+    return results.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
   }
 }

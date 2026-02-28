@@ -130,6 +130,14 @@ export default function Home() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
+  // Navigate to agent from widget
+  useEffect(() => {
+    window.electronAPI?.onNavigateToAgent((agentId: string) => {
+      setSelectedAgentId(agentId);
+      setActiveMeetingRoomId(null);
+    });
+  }, []);
+
   const selectedAgent = agents.find((a) => a.id === selectedAgentId);
 
   return (

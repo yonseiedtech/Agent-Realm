@@ -134,55 +134,59 @@ export default function MeetingRoom({ agents }: { agents: Agent[] }) {
 
     return (
       <div data-testid="meeting-room-detail" className="h-full flex flex-col">
-        <div className="px-3 py-2 border-b border-[#40444B] flex items-center gap-2 shrink-0">
+        <div className="px-3 py-2 flex items-center gap-2 shrink-0" style={{ borderBottom: "1px solid var(--dc-border-subtle)" }}>
           <Button
             data-testid="button-back-to-rooms"
             size="icon"
             variant="ghost"
             onClick={() => setSelectedRoomId(null)}
-            className="text-gray-400"
+            style={{ color: "var(--dc-text-muted)" }}
           >
             <ArrowLeft className="w-4 h-4" />
           </Button>
           <div className="flex-1 min-w-0">
-            <h3 className="text-sm font-semibold text-white truncate" data-testid="text-room-name">
+            <h3 className="text-sm font-semibold truncate" style={{ color: "var(--dc-text-primary)" }} data-testid="text-room-name">
               {roomDetail.name}
             </h3>
             {roomDetail.topic && (
-              <p className="text-[10px] text-gray-400 truncate">{roomDetail.topic}</p>
+              <p className="text-[10px] truncate" style={{ color: "var(--dc-text-muted)" }}>{roomDetail.topic}</p>
             )}
           </div>
           <Badge
             data-testid="badge-room-status"
-            className={
-              isActive
-                ? "bg-[#57F287]/20 text-[#57F287] border-none"
-                : "bg-gray-500/20 text-gray-400 border-none"
-            }
+            className="border-none"
+            style={{
+              backgroundColor: isActive ? "rgba(35,165,89,0.15)" : "rgba(128,128,128,0.15)",
+              color: isActive ? "#23a559" : "var(--dc-text-muted)",
+            }}
           >
             {isActive ? "진행 중" : "종료"}
           </Badge>
         </div>
 
-        <div className="px-3 py-2 border-b border-[#40444B] shrink-0">
+        <div className="px-3 py-2 shrink-0" style={{ borderBottom: "1px solid var(--dc-border-subtle)" }}>
           <div className="flex items-center gap-1 mb-2 flex-wrap">
-            <span className="text-[10px] text-gray-500 mr-1">참가자:</span>
+            <span className="text-[10px] mr-1" style={{ color: "var(--dc-text-muted)" }}>참가자:</span>
             {roomDetail.participants.map((p) => (
               <div
                 key={p.id}
                 data-testid={`badge-participant-${p.agentId}`}
-                className="flex items-center gap-1 bg-[#40444B] rounded-md px-1.5 py-0.5 text-[10px]"
+                className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px]"
+                style={{ background: "var(--dc-bg-tertiary)" }}
               >
                 <img
                   src={`/characters/${p.agentRole || "general"}.png`}
                   alt={p.agentName || ""}
                   className="w-4 h-4 rounded-full inline-block object-cover"
                 />
-                <span className="text-white">{p.agentName || `#${p.agentId}`}</span>
+                <span style={{ color: "var(--dc-text-primary)" }}>{p.agentName || `#${p.agentId}`}</span>
                 {isActive && (
                   <button
                     data-testid={`button-remove-participant-${p.agentId}`}
-                    className="text-gray-500 hover:text-red-400 ml-0.5"
+                    className="ml-0.5 transition-colors"
+                    style={{ color: "var(--dc-text-muted)" }}
+                    onMouseEnter={e => (e.currentTarget.style.color = "var(--dc-red)")}
+                    onMouseLeave={e => (e.currentTarget.style.color = "var(--dc-text-muted)")}
                     onClick={() => removeMutation.mutate(p.agentId)}
                   >
                     <UserMinus className="w-2.5 h-2.5" />
@@ -197,7 +201,8 @@ export default function MeetingRoom({ agents }: { agents: Agent[] }) {
               <Select value={inviteAgentId} onValueChange={setInviteAgentId}>
                 <SelectTrigger
                   data-testid="select-invite-agent"
-                  className="bg-[#40444B] border-none text-white text-xs h-7 flex-1"
+                  className="border-none text-xs h-7 flex-1"
+                  style={{ background: "var(--dc-bg-input)", color: "var(--dc-text-primary)" }}
                 >
                   <SelectValue placeholder="에이전트 선택..." />
                 </SelectTrigger>
@@ -212,7 +217,8 @@ export default function MeetingRoom({ agents }: { agents: Agent[] }) {
               <Button
                 data-testid="button-invite-agent"
                 size="sm"
-                className="bg-[#5865F2] text-white text-xs h-7"
+                className="text-xs h-7"
+                style={{ background: "#5865F2", color: "#fff" }}
                 onClick={() => inviteAgentId && inviteMutation.mutate(inviteAgentId)}
                 disabled={!inviteAgentId || inviteMutation.isPending}
               >
@@ -226,7 +232,7 @@ export default function MeetingRoom({ agents }: { agents: Agent[] }) {
         <ScrollArea className="flex-1">
           <div className="p-3 space-y-2">
             {(!roomDetail.messages || roomDetail.messages.length === 0) && (
-              <div className="text-center text-gray-500 text-xs py-8">
+              <div className="text-center text-xs py-8" style={{ color: "var(--dc-text-muted)" }}>
                 <MessageCircle className="w-8 h-8 mx-auto mb-2 opacity-30" />
                 아직 발언이 없습니다
               </div>
@@ -237,7 +243,8 @@ export default function MeetingRoom({ agents }: { agents: Agent[] }) {
                 <div
                   key={msg.id}
                   data-testid={`message-${msg.id}`}
-                  className="rounded-lg bg-[#36393F] p-2.5"
+                  className="rounded-xl p-2.5"
+                  style={{ background: "var(--dc-bg-secondary)", boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}
                 >
                   <div className="flex items-center gap-2 mb-1">
                     <img
@@ -245,19 +252,19 @@ export default function MeetingRoom({ agents }: { agents: Agent[] }) {
                       alt={msg.agentName || ""}
                       className="w-5 h-5 rounded-full inline-block shrink-0 object-cover"
                     />
-                    <span className="text-xs font-semibold text-white">
+                    <span className="text-xs font-semibold" style={{ color: "var(--dc-text-primary)" }}>
                       {msg.agentName || `에이전트 #${msg.agentId}`}
                     </span>
                     {msg.agentRole && (
-                      <span className="text-[10px] text-gray-500">
+                      <span className="text-[10px]" style={{ color: "var(--dc-text-muted)" }}>
                         {roleLabels[msg.agentRole] || msg.agentRole}
                       </span>
                     )}
-                    <span className="text-[10px] text-gray-600 ml-auto">
+                    <span className="text-[10px] ml-auto" style={{ color: "var(--dc-text-muted)" }}>
                       {new Date(msg.createdAt).toLocaleTimeString("ko-KR")}
                     </span>
                   </div>
-                  <div className="text-xs text-gray-300 whitespace-pre-wrap leading-relaxed">
+                  <div className="text-xs whitespace-pre-wrap leading-relaxed" style={{ color: "var(--dc-text-secondary)" }}>
                     {msg.content}
                   </div>
                 </div>
@@ -268,12 +275,13 @@ export default function MeetingRoom({ agents }: { agents: Agent[] }) {
         </ScrollArea>
 
         {isActive && (
-          <div className="px-3 py-2 border-t border-[#40444B] shrink-0 space-y-2">
+          <div className="px-3 py-2 shrink-0 space-y-2" style={{ borderTop: "1px solid var(--dc-border-subtle)" }}>
             <div className="flex gap-1.5">
               <Input
                 data-testid="input-discuss-topic"
                 placeholder="토론 주제 입력..."
-                className="bg-[#40444B] border-none text-white text-xs h-8"
+                className="border-none text-xs h-8"
+                style={{ background: "var(--dc-bg-input)", color: "var(--dc-text-primary)" }}
                 value={discussTopic}
                 onChange={(e) => setDiscussTopic(e.target.value)}
                 onKeyDown={(e) =>
@@ -285,7 +293,8 @@ export default function MeetingRoom({ agents }: { agents: Agent[] }) {
               <Button
                 data-testid="button-start-discuss"
                 size="sm"
-                className="bg-[#57F287] text-black text-xs h-8"
+                className="text-xs h-8"
+                style={{ background: "#23a559", color: "#fff" }}
                 onClick={() =>
                   discussTopic.trim() && discussMutation.mutate(discussTopic)
                 }
@@ -318,30 +327,33 @@ export default function MeetingRoom({ agents }: { agents: Agent[] }) {
 
   return (
     <div data-testid="meeting-room-list" className="h-full flex flex-col">
-      <div className="px-4 py-3 border-b border-[#40444B] flex items-center gap-2 shrink-0">
-        <DoorOpen className="w-4 h-4 text-[#5865F2]" />
-        <span className="text-sm font-semibold text-white">회의실</span>
+      <div className="px-4 py-3 flex items-center gap-2 shrink-0" style={{ borderBottom: "1px solid var(--dc-border-subtle)" }}>
+        <DoorOpen className="w-4 h-4" style={{ color: "#5865F2" }} />
+        <span className="text-sm font-semibold" style={{ color: "var(--dc-text-primary)" }}>회의실</span>
       </div>
 
-      <div className="px-3 py-2 border-b border-[#40444B] shrink-0 space-y-2">
+      <div className="px-3 py-2 shrink-0 space-y-2" style={{ borderBottom: "1px solid var(--dc-border-subtle)" }}>
         <Input
           data-testid="input-room-name"
           placeholder="회의실 이름"
-          className="bg-[#40444B] border-none text-white text-xs"
+          className="border-none text-xs"
+          style={{ background: "var(--dc-bg-input)", color: "var(--dc-text-primary)" }}
           value={newRoomName}
           onChange={(e) => setNewRoomName(e.target.value)}
         />
         <Input
           data-testid="input-room-topic"
           placeholder="주제 (선택사항)"
-          className="bg-[#40444B] border-none text-white text-xs"
+          className="border-none text-xs"
+          style={{ background: "var(--dc-bg-input)", color: "var(--dc-text-primary)" }}
           value={newRoomTopic}
           onChange={(e) => setNewRoomTopic(e.target.value)}
         />
         <Button
           data-testid="button-create-room"
           size="sm"
-          className="w-full bg-[#5865F2] text-white text-xs"
+          className="w-full text-xs"
+          style={{ background: "#5865F2", color: "#fff" }}
           onClick={() => createRoomMutation.mutate()}
           disabled={!newRoomName.trim() || createRoomMutation.isPending}
         >
@@ -353,7 +365,7 @@ export default function MeetingRoom({ agents }: { agents: Agent[] }) {
       <ScrollArea className="flex-1">
         <div className="p-3 space-y-2">
           {rooms.length === 0 && (
-            <div className="text-center text-gray-500 text-xs py-8">
+            <div className="text-center text-xs py-8" style={{ color: "var(--dc-text-muted)" }}>
               <DoorOpen className="w-8 h-8 mx-auto mb-2 opacity-30" />
               회의실이 없습니다
             </div>
@@ -362,27 +374,28 @@ export default function MeetingRoom({ agents }: { agents: Agent[] }) {
             <button
               key={room.id}
               data-testid={`button-room-${room.id}`}
-              className="w-full text-left rounded-lg bg-[#36393F] p-3 hover-elevate cursor-pointer"
+              className="w-full text-left rounded-xl p-3 hover-elevate cursor-pointer"
+              style={{ background: "var(--dc-bg-secondary)", boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}
               onClick={() => setSelectedRoomId(room.id)}
             >
               <div className="flex items-center justify-between gap-2 mb-1">
-                <span className="text-xs font-semibold text-white truncate">
+                <span className="text-xs font-semibold truncate" style={{ color: "var(--dc-text-primary)" }}>
                   {room.name}
                 </span>
                 <Badge
-                  className={
-                    room.status === "active"
-                      ? "bg-[#57F287]/20 text-[#57F287] border-none"
-                      : "bg-gray-500/20 text-gray-400 border-none"
-                  }
+                  className="border-none"
+                  style={{
+                    backgroundColor: room.status === "active" ? "rgba(35,165,89,0.15)" : "rgba(128,128,128,0.15)",
+                    color: room.status === "active" ? "#23a559" : "var(--dc-text-muted)",
+                  }}
                 >
                   {room.status === "active" ? "진행 중" : "종료"}
                 </Badge>
               </div>
               {room.topic && (
-                <p className="text-[10px] text-gray-400 truncate">{room.topic}</p>
+                <p className="text-[10px] truncate" style={{ color: "var(--dc-text-muted)" }}>{room.topic}</p>
               )}
-              <p className="text-[10px] text-gray-600 mt-1">
+              <p className="text-[10px] mt-1" style={{ color: "var(--dc-text-muted)" }}>
                 {new Date(room.createdAt).toLocaleDateString("ko-KR")}
               </p>
             </button>

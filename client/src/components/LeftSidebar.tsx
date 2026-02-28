@@ -33,6 +33,7 @@ import {
   MicOff,
   ChevronDown,
   ChevronRight,
+  Trash2,
 } from "lucide-react";
 import { soundManager } from "@/lib/sounds";
 import type { Agent, MeetingRoom } from "@shared/schema";
@@ -100,6 +101,15 @@ export default function LeftSidebar({
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/meetings"] });
       setNewRoomName("");
+    },
+  });
+
+  const deleteRoomMutation = useMutation({
+    mutationFn: async (roomId: string) => {
+      await apiRequest("DELETE", `/api/meetings/${roomId}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/meetings"] });
     },
   });
 
@@ -194,17 +204,13 @@ export default function LeftSidebar({
           {meetingSectionOpen && (
             <div className="mt-1 space-y-0.5">
               {meetingRooms.map(room => (
-                <button
+                <div
                   key={room.id}
-                  className="w-full text-left flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer transition-colors"
+                  className="group flex items-center rounded-md transition-colors"
                   style={{
                     background: activeMeetingRoomId === room.id
                       ? "var(--dc-bg-modifier-selected)"
                       : "transparent",
-                  }}
-                  onClick={() => {
-                    soundManager.uiClick();
-                    onSelectMeetingRoom(room.id);
                   }}
                   onMouseEnter={e => {
                     if (activeMeetingRoomId !== room.id)
@@ -215,26 +221,47 @@ export default function LeftSidebar({
                       (e.currentTarget as HTMLElement).style.background = "transparent";
                   }}
                 >
-                  <DoorOpen
-                    className="w-4 h-4 shrink-0"
-                    style={{ color: room.status === "active" ? "#57F287" : "var(--dc-text-muted)" }}
-                  />
-                  <span
-                    className="text-xs truncate flex-1"
-                    style={{ color: "var(--dc-text-primary)" }}
-                  >
-                    {room.name}
-                  </span>
-                  <Badge
-                    className="text-[8px] px-1 py-0 h-3.5 border-none shrink-0"
-                    style={{
-                      backgroundColor: room.status === "active" ? "rgba(87,242,135,0.15)" : "rgba(128,128,128,0.15)",
-                      color: room.status === "active" ? "#57F287" : "#999",
+                  <button
+                    className="flex-1 text-left flex items-center gap-2 px-2 py-1.5 cursor-pointer min-w-0"
+                    onClick={() => {
+                      soundManager.uiClick();
+                      onSelectMeetingRoom(room.id);
                     }}
                   >
-                    {room.status === "active" ? "진행" : "종료"}
-                  </Badge>
-                </button>
+                    <DoorOpen
+                      className="w-4 h-4 shrink-0"
+                      style={{ color: room.status === "active" ? "#57F287" : "var(--dc-text-muted)" }}
+                    />
+                    <span
+                      className="text-xs truncate flex-1"
+                      style={{ color: "var(--dc-text-primary)" }}
+                    >
+                      {room.name}
+                    </span>
+                    <Badge
+                      className="text-[8px] px-1 py-0 h-3.5 border-none shrink-0"
+                      style={{
+                        backgroundColor: room.status === "active" ? "rgba(87,242,135,0.15)" : "rgba(128,128,128,0.15)",
+                        color: room.status === "active" ? "#57F287" : "#999",
+                      }}
+                    >
+                      {room.status === "active" ? "진행" : "종료"}
+                    </Badge>
+                  </button>
+                  <button
+                    className="w-6 h-6 flex items-center justify-center rounded opacity-0 group-hover:opacity-100 transition-opacity shrink-0 mr-1"
+                    style={{ color: "var(--dc-text-muted)" }}
+                    onMouseEnter={e => (e.currentTarget.style.color = "var(--dc-red)")}
+                    onMouseLeave={e => (e.currentTarget.style.color = "var(--dc-text-muted)")}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      deleteRoomMutation.mutate(room.id);
+                    }}
+                    title="회의실 삭제"
+                  >
+                    <Trash2 className="w-3 h-3" />
+                  </button>
+                </div>
               ))}
 
               {/* Inline new room creation */}
@@ -361,8 +388,8 @@ export default function LeftSidebar({
                 <Input
                   data-testid="input-agent-name"
                   placeholder="에이전트 이름"
-                  className="border-none text-white"
-                  style={{ background: "var(--dc-bg-input)" }}
+                  className="border-none"
+                  style={{ background: "var(--dc-bg-input)", color: "var(--dc-text-primary)" }}
                   value={newAgentName}
                   onChange={(e) => setNewAgentName(e.target.value)}
                 />
@@ -376,16 +403,15 @@ export default function LeftSidebar({
                 </label>
                 <Select value={newAgentRole} onValueChange={setNewAgentRole}>
                   <SelectTrigger
-                    className="border-none text-white"
-                    style={{ background: "var(--dc-bg-input)" }}
+                    className="border-none"
+                    style={{ background: "var(--dc-bg-input)", color: "var(--dc-text-primary)" }}
                     data-testid="select-new-role"
                   >
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="pm">PM</SelectItem>
-                    <SelectItem value="frontend">프론트엔드</SelectItem>
-                    <SelectItem value="backend">백엔드</SelectItem>
+                    <SelectItem value="fullstack">풀스택</SelectItem>
                     <SelectItem value="designer">디자이너</SelectItem>
                     <SelectItem value="tester">테스터</SelectItem>
                     <SelectItem value="devops">DevOps</SelectItem>
@@ -395,7 +421,7 @@ export default function LeftSidebar({
               </div>
               <Button
                 data-testid="button-create-agent"
-                className="w-full bg-[#57F287] hover:bg-[#47d377] text-black font-semibold"
+                className="w-full font-semibold" style={{ background: "#23a559", color: "#fff" }}
                 onClick={() => createMutation.mutate()}
                 disabled={!newAgentName.trim() || createMutation.isPending}
               >
