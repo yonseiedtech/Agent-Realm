@@ -202,6 +202,8 @@ ${agentListStr || "없음"}
     const temp = parseFloat(agent.temperature || "1");
     const tools = toolRegistry.getToolsForRole(agent.role);
 
+    const agentApiKey = agent.apiKey || null;
+
     let response = await chatCompletion({
       model: modelName,
       maxTokens,
@@ -209,6 +211,7 @@ ${agentListStr || "없음"}
       system: systemPrompt,
       tools,
       messages: recentConversation.map(m => ({ role: m.role, content: m.content })),
+      apiKey: agentApiKey,
     });
 
     let fullResponse = "";
@@ -250,6 +253,7 @@ ${agentListStr || "없음"}
         system: systemPrompt,
         tools,
         messages: recentConversation.map(m => ({ role: m.role, content: m.content })),
+        apiKey: agentApiKey,
         toolResults,
         previousResponse: response,
       });
@@ -284,6 +288,7 @@ ${agentListStr || "없음"}
         system: systemPrompt,
         tools,
         messages: evalMessages,
+        apiKey: agentApiKey,
       });
 
       // Handle tool calls during self-evaluation
@@ -313,6 +318,7 @@ ${agentListStr || "없음"}
           system: systemPrompt,
           tools,
           messages: evalMessages,
+          apiKey: agentApiKey,
           toolResults,
           previousResponse: evalResponse,
         });

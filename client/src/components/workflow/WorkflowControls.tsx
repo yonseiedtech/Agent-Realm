@@ -1,5 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 
 interface WorkflowControlsProps {
   workflowId: string | null;
@@ -9,6 +10,7 @@ interface WorkflowControlsProps {
 
 export default function WorkflowControls({ workflowId, status, progress }: WorkflowControlsProps) {
   const queryClient = useQueryClient();
+  const { toast } = useToast();
 
   const cancelMutation = useMutation({
     mutationFn: async () => {
@@ -17,6 +19,10 @@ export default function WorkflowControls({ workflowId, status, progress }: Workf
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/workflows"] });
+      toast({ title: "워크플로우가 취소되었습니다" });
+    },
+    onError: (error: any) => {
+      toast({ title: "취소 실패", description: error.message, variant: "destructive" });
     },
   });
 
@@ -27,6 +33,21 @@ export default function WorkflowControls({ workflowId, status, progress }: Workf
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/workflows"] });
+      toast({ title: "워크플로우가 삭제되었습니다" });
+    },
+  });
+
+  const retryMutation = useMutation({
+    mutationFn: async () => {
+      if (!workflowId) return;
+      await apiRequest("POST", `/api/workflows/${workflowId}/retry`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/workflows"] });
+      toast({ title: "워크플로우를 재실행합니다" });
+    },
+    onError: (error: any) => {
+      toast({ title: "재실행 실패", description: error.message, variant: "destructive" });
     },
   });
 
@@ -61,6 +82,16 @@ export default function WorkflowControls({ workflowId, status, progress }: Workf
           style={{ background: "#fee2e2", color: "#dc2626" }}
         >
           취소
+        </button>
+      )}
+      {status === "failed" && (
+        <button
+          onClick={() => retryMutation.mutate()}
+          disabled={retryMutation.isPending}
+          className="px-3 py-1 text-xs rounded font-medium"
+          style={{ background: "#dbeafe", color: "#2563eb" }}
+        >
+          {retryMutation.isPending ? "재실행 중..." : "↻ 재실행"}
         </button>
       )}
       {(status === "completed" || status === "failed" || status === "cancelled") && (

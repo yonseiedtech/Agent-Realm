@@ -240,6 +240,53 @@ export class Orchestrator {
     return allDeps;
   }
 
+  async retryWorkflow(workflowId: string): Promise<void> {
+    const workflow = await storage.getWorkflow(workflowId);
+    if (!workflow) throw new Error("워크플로우를 찾을 수 없습니다");
+    if (workflow.status !== "failed") throw new Error("실패한 워크플로우만 재실행할 수 있습니다");
+
+    const tasks = await storage.getWorkflowTasks(workflowId);
+    // Reset failed tasks to pending; keep completed tasks
+    for (const task of tasks) {
+      if (task.status === "failed") {
+        await storage.updateWorkflowTask(task.id, { status: "pending", result: null, completedAt: null as any });
+      }
+    }
+
+    await storage.updateWorkflow(workflowId, { status: "running", completedAt: null as any });
+
+    const agents = await storage.getAllAgents();
+    const abortController = new AbortController();
+    activeWorkflows.set(workflowId, abortController);
+
+    this.runWorkflowLoop(workflow, workflow.description || "", agents, abortController.signal)
+      .catch(console.error)
+      .finally(() => activeWorkflows.delete(workflowId));
+  }
+
+  async retryTask(workflowId: string, taskId: string): Promise<void> {
+    const workflow = await storage.getWorkflow(workflowId);
+    if (!workflow) throw new Error("워크플로우를 찾을 수 없습니다");
+
+    const tasks = await storage.getWorkflowTasks(workflowId);
+    const task = tasks.find(t => t.id === taskId);
+    if (!task) throw new Error("작업을 찾을 수 없습니다");
+    if (task.status !== "failed") throw new Error("실패한 작업만 재실행할 수 있습니다");
+
+    // Reset the single task
+    await storage.updateWorkflowTask(taskId, { status: "pending", result: null, completedAt: null as any });
+
+    const agents = await storage.getAllAgents();
+    await this.executeTask({ ...task, status: "pending", result: null }, agents);
+
+    // Re-evaluate workflow status
+    const updatedTasks = await storage.getWorkflowTasks(workflowId);
+    const hasFailed = updatedTasks.some(t => t.status === "failed");
+    const allCompleted = updatedTasks.every(t => t.status === "completed");
+    const finalStatus = allCompleted ? "completed" : hasFailed ? "failed" : workflow.status;
+    await storage.updateWorkflow(workflowId, { status: finalStatus });
+  }
+
   async cancelWorkflow(workflowId: string): Promise<void> {
     const controller = activeWorkflows.get(workflowId);
     if (controller) {

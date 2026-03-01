@@ -5,6 +5,7 @@ const fs = require("fs");
 let mainWindow;
 let widgetWindow;
 let savedBounds = null; // { x, y, width, height } before minimize
+let widgetScale = 1.0; // 0.6 ~ 1.6
 const PORT = 18080;
 
 function loadEnv() {
@@ -133,7 +134,7 @@ function createWidgetWindow() {
 
   widgetWindow = new BrowserWindow({
     width: 320,
-    height: 80,
+    height: 100,
     frame: false,
     transparent: true,
     alwaysOnTop: true,
@@ -188,6 +189,14 @@ ipcMain.on("resize-widget", (_event, width, height) => {
 ipcMain.on("is-widget", (event) => {
   const win = BrowserWindow.fromWebContents(event.sender);
   event.returnValue = win === widgetWindow;
+});
+
+ipcMain.on("set-widget-scale", (_event, scale) => {
+  widgetScale = Math.min(1.6, Math.max(0.6, scale));
+});
+
+ipcMain.on("get-widget-scale", (event) => {
+  event.returnValue = widgetScale;
 });
 
 app.whenReady().then(async () => {

@@ -1,17 +1,19 @@
-import { useState, useCallback, useEffect } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { apiRequest } from "@/lib/queryClient";
-import { AnimatePresence } from "framer-motion";
+import { useCallback } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import LeftSidebar from "@/components/LeftSidebar";
+
 import CenterPanel from "@/components/CenterPanel";
 import DetailPanel from "@/components/DetailPanel";
 import CommandPalette from "@/components/CommandPalette";
 import MeetingCenterPanel from "@/components/MeetingCenterPanel";
 import AgentChatPanel from "@/components/AgentChatPanel";
 import WorkflowBoard from "@/components/workflow/WorkflowBoard";
+import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { useSound } from "@/hooks/useSound";
 import { useTTS } from "@/hooks/useTTS";
+import { useAppState } from "@/hooks/useAppState";
+import { useAgentActions } from "@/hooks/useAgentActions";
 import { soundManager } from "@/lib/sounds";
 import {
   Dialog,
@@ -20,15 +22,32 @@ import {
 import type { Agent } from "@shared/schema";
 
 export default function Home() {
-  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
-  const [rightPanelOpen, setRightPanelOpen] = useState(true);
-  const [activeMeetingRoomId, setActiveMeetingRoomId] = useState<string | null>(null);
-  const [activeWorkflowView, setActiveWorkflowView] = useState(false);
-  const [chatPanelOpen, setChatPanelOpen] = useState(false);
-  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const {
+    selectedAgentId,
+    rightPanelOpen,
+    activeMeetingRoomId,
+    activeWorkflowView,
+    chatPanelOpen,
+    commandPaletteOpen,
+    selectAgent,
+    selectMeetingRoom,
+    selectWorkflow,
+    clearMeetingRoom,
+    clearSelectedAgent,
+    toggleRightPanel,
+    closeRightPanel,
+    toggleChatPanel,
+    toggleCommandPalette,
+    setCommandPaletteState,
+    setChatPanelState,
+  } = useAppState();
+
   const queryClient = useQueryClient();
   const { muted, toggleMute } = useSound();
   const { enabled: ttsEnabled, toggleTTS, speak } = useTTS();
+
+  const { deleteAgent, broadcast, discuss, isBroadcasting, isDiscussing } =
+    useAgentActions(clearSelectedAgent);
 
   const onWsMessage = useCallback(
     (event: { type: string; data: any }) => {
@@ -49,7 +68,6 @@ export default function Home() {
         });
       }
 
-      // Workflow events
       if (event.type.startsWith("workflow_")) {
         queryClient.invalidateQueries({ queryKey: ["/api/workflows"] });
       }
@@ -79,50 +97,12 @@ export default function Home() {
     [queryClient, selectedAgentId, activeMeetingRoomId],
   );
 
-  const { connected } = useWebSocket(onWsMessage);
+  const { connected, reconnecting } = useWebSocket(onWsMessage);
 
   const { data: agents = [] } = useQuery<Agent[]>({
     queryKey: ["/api/agents"],
     refetchInterval: 5000,
   });
-
-  const createMutation = useMutation({
-    mutationFn: async ({ name, role }: { name: string; role: string }) => {
-      await apiRequest("POST", "/api/agents", { name, role });
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/agents"] });
-    },
-  });
-
-  const deleteMutation = useMutation({
-    mutationFn: async (id: string) => {
-      await apiRequest("DELETE", `/api/agents/${id}`);
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/agents"] });
-      setSelectedAgentId(null);
-    },
-  });
-
-  const broadcastMutation = useMutation({
-    mutationFn: async (description: string) => {
-      soundManager.messageSent();
-      await apiRequest("POST", "/api/agents/broadcast", { description });
-    },
-  });
-
-  const discussMutation = useMutation({
-    mutationFn: async (topic: string) => {
-      soundManager.messageSent();
-      await apiRequest("POST", "/api/agents/discuss", { topic });
-    },
-  });
-
-  const handleSelectAgent = useCallback((id: string) => {
-    soundManager.uiClick();
-    setSelectedAgentId(id);
-  }, []);
 
   const handleTTSSpeak = useCallback(
     (text: string, role: string) => {
@@ -131,100 +111,80 @@ export default function Home() {
     [speak],
   );
 
-  // Ctrl+K keyboard shortcut
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === "k") {
-        e.preventDefault();
-        setCommandPaletteOpen((v) => !v);
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, []);
-
-  // Navigate to agent from widget
-  useEffect(() => {
-    window.electronAPI?.onNavigateToAgent((agentId: string) => {
-      setSelectedAgentId(agentId);
-      setActiveMeetingRoomId(null);
-    });
-  }, []);
-
   const selectedAgent = agents.find((a) => a.id === selectedAgentId);
+
+  // Workflow/Meeting views use full center area (no resizable panels)
+  const isFullCenterView = activeWorkflowView || !!activeMeetingRoomId;
 
   return (
     <div
-      className="h-screen flex overflow-hidden"
+      className="h-screen overflow-hidden"
       style={{ background: "var(--dc-bg-darkest)" }}
     >
-      {/* Left sidebar */}
-      <LeftSidebar
-        agents={agents}
-        selectedAgentId={selectedAgentId}
-        onSelectAgent={(id) => {
-          handleSelectAgent(id);
-          setActiveMeetingRoomId(null);
-          setActiveWorkflowView(false);
-        }}
-        connected={connected}
-        muted={muted}
-        toggleMute={toggleMute}
-        ttsEnabled={ttsEnabled}
-        toggleTTS={toggleTTS}
-        onSelectMeetingRoom={(roomId) => {
-          setActiveMeetingRoomId(roomId);
-          setSelectedAgentId(null);
-          setActiveWorkflowView(false);
-        }}
-        activeMeetingRoomId={activeMeetingRoomId}
-        onToggleChatPanel={() => setChatPanelOpen((v) => !v)}
-        chatPanelOpen={chatPanelOpen}
-        onSelectWorkflow={() => {
-          setActiveWorkflowView(true);
-          setActiveMeetingRoomId(null);
-          setSelectedAgentId(null);
-        }}
-        activeWorkflowView={activeWorkflowView}
-      />
-
-      {/* Center panel — Workflow, Meeting, or Agent chat */}
-      {activeWorkflowView ? (
-        <div className="flex-1 min-w-0">
-          <WorkflowBoard agents={agents} />
-        </div>
-      ) : activeMeetingRoomId ? (
-        <MeetingCenterPanel
-          roomId={activeMeetingRoomId}
-          agents={agents}
-          onBack={() => setActiveMeetingRoomId(null)}
-        />
-      ) : (
-        <>
-          <CenterPanel
+      <ResizablePanelGroup direction="horizontal">
+        {/* Left sidebar panel */}
+        <ResizablePanel defaultSize={18} minSize={13} maxSize={28}>
+          <LeftSidebar
             agents={agents}
             selectedAgentId={selectedAgentId}
-            onDeleteAgent={(id) => deleteMutation.mutate(id)}
+            onSelectAgent={selectAgent}
+            connected={connected}
+            reconnecting={reconnecting}
+            muted={muted}
+            toggleMute={toggleMute}
             ttsEnabled={ttsEnabled}
-            onTTSSpeak={handleTTSSpeak}
-            rightPanelOpen={rightPanelOpen}
-            onToggleRightPanel={() => setRightPanelOpen((v) => !v)}
+            toggleTTS={toggleTTS}
+            onSelectMeetingRoom={selectMeetingRoom}
+            activeMeetingRoomId={activeMeetingRoomId}
+            onToggleChatPanel={toggleChatPanel}
+            chatPanelOpen={chatPanelOpen}
+            onSelectWorkflow={selectWorkflow}
+            activeWorkflowView={activeWorkflowView}
           />
+        </ResizablePanel>
 
-          {/* Right detail panel */}
-          <AnimatePresence>
-            {rightPanelOpen && selectedAgent && (
+        <ResizableHandle />
+
+        {/* Center panel */}
+        <ResizablePanel defaultSize={isFullCenterView || !rightPanelOpen || !selectedAgent ? 82 : 57}>
+          {activeWorkflowView ? (
+            <div className="h-full">
+              <WorkflowBoard agents={agents} />
+            </div>
+          ) : activeMeetingRoomId ? (
+            <MeetingCenterPanel
+              roomId={activeMeetingRoomId}
+              agents={agents}
+              onBack={clearMeetingRoom}
+            />
+          ) : (
+            <CenterPanel
+              agents={agents}
+              selectedAgentId={selectedAgentId}
+              onDeleteAgent={deleteAgent}
+              ttsEnabled={ttsEnabled}
+              onTTSSpeak={handleTTSSpeak}
+              rightPanelOpen={rightPanelOpen}
+              onToggleRightPanel={toggleRightPanel}
+            />
+          )}
+        </ResizablePanel>
+
+        {/* Right detail panel — only in agent chat view */}
+        {!isFullCenterView && rightPanelOpen && selectedAgent && (
+          <>
+            <ResizableHandle />
+            <ResizablePanel defaultSize={25} minSize={18} maxSize={40}>
               <DetailPanel
                 agent={selectedAgent}
-                onClose={() => setRightPanelOpen(false)}
+                onClose={closeRightPanel}
               />
-            )}
-          </AnimatePresence>
-        </>
-      )}
+            </ResizablePanel>
+          </>
+        )}
+      </ResizablePanelGroup>
 
-      {/* Agent chat dialog */}
-      <Dialog open={chatPanelOpen} onOpenChange={setChatPanelOpen}>
+      <Dialog open={chatPanelOpen} onOpenChange={setChatPanelState}>
         <DialogContent
           className="max-w-md h-[600px] p-0 overflow-hidden"
           style={{
@@ -236,14 +196,13 @@ export default function Home() {
         </DialogContent>
       </Dialog>
 
-      {/* Command palette */}
       <CommandPalette
         open={commandPaletteOpen}
-        onClose={() => setCommandPaletteOpen(false)}
-        onBroadcast={(msg) => broadcastMutation.mutate(msg)}
-        onDiscuss={(topic) => discussMutation.mutate(topic)}
-        broadcastPending={broadcastMutation.isPending}
-        discussPending={discussMutation.isPending}
+        onClose={() => setCommandPaletteState(false)}
+        onBroadcast={broadcast}
+        onDiscuss={discuss}
+        broadcastPending={isBroadcasting}
+        discussPending={isDiscussing}
         disabled={agents.length === 0}
       />
     </div>

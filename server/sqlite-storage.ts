@@ -135,6 +135,15 @@ export class SqliteStorage implements IStorage {
       this.db.prepare("INSERT OR IGNORE INTO _migrations (name) VALUES ('add_avatarUrl')").run();
     }
 
+    // apiKey migration
+    const hasApiKeyMigration = this.db.prepare("SELECT 1 FROM _migrations WHERE name = 'add_agent_apiKey'").get();
+    if (!hasApiKeyMigration) {
+      try {
+        this.db.exec("ALTER TABLE agents ADD COLUMN apiKey TEXT");
+      } catch {}
+      this.db.prepare("INSERT OR IGNORE INTO _migrations (name) VALUES ('add_agent_apiKey')").run();
+    }
+
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_tasks_agentId ON tasks(agentId);
       CREATE INDEX IF NOT EXISTS idx_tasks_createdAt ON tasks(createdAt);
@@ -267,8 +276,8 @@ export class SqliteStorage implements IStorage {
     const id = randomUUID();
     const createdAt = this.now();
     this.db.prepare(`
-      INSERT INTO agents (id, name, role, status, color, avatarType, avatarUrl, currentTask, currentFile, systemPrompt, model, maxTokens, temperature, createdAt)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO agents (id, name, role, status, color, avatarType, avatarUrl, currentTask, currentFile, systemPrompt, model, maxTokens, temperature, apiKey, createdAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       agent.name,
@@ -283,9 +292,10 @@ export class SqliteStorage implements IStorage {
       agent.model ?? "claude-sonnet-4-6",
       agent.maxTokens ?? 4096,
       agent.temperature ?? "1",
+      agent.apiKey ?? null,
       createdAt,
     );
-    return { id, name: agent.name, role: agent.role ?? "general", status: agent.status ?? "idle", color: agent.color ?? "#5865F2", avatarType: agent.avatarType ?? "cat", avatarUrl: agent.avatarUrl ?? null, currentTask: agent.currentTask ?? null, currentFile: agent.currentFile ?? null, systemPrompt: agent.systemPrompt ?? null, model: agent.model ?? "claude-sonnet-4-6", maxTokens: agent.maxTokens ?? 4096, temperature: agent.temperature ?? "1", createdAt: new Date(createdAt) };
+    return { id, name: agent.name, role: agent.role ?? "general", status: agent.status ?? "idle", color: agent.color ?? "#5865F2", avatarType: agent.avatarType ?? "cat", avatarUrl: agent.avatarUrl ?? null, currentTask: agent.currentTask ?? null, currentFile: agent.currentFile ?? null, systemPrompt: agent.systemPrompt ?? null, model: agent.model ?? "claude-sonnet-4-6", maxTokens: agent.maxTokens ?? 4096, temperature: agent.temperature ?? "1", apiKey: agent.apiKey ?? null, createdAt: new Date(createdAt) };
   }
 
   async updateAgent(id: string, data: Partial<InsertAgent>): Promise<Agent | undefined> {

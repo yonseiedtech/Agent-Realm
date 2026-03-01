@@ -34,6 +34,7 @@ import {
   ChevronDown,
   ChevronRight,
   Trash2,
+  Loader2,
 } from "lucide-react";
 import { soundManager } from "@/lib/sounds";
 import type { Agent, MeetingRoom } from "@shared/schema";
@@ -43,6 +44,7 @@ interface LeftSidebarProps {
   selectedAgentId: string | null;
   onSelectAgent: (id: string) => void;
   connected: boolean;
+  reconnecting?: boolean;
   muted: boolean;
   toggleMute: () => void;
   ttsEnabled: boolean;
@@ -60,6 +62,7 @@ export default function LeftSidebar({
   selectedAgentId,
   onSelectAgent,
   connected,
+  reconnecting,
   muted,
   toggleMute,
   ttsEnabled,
@@ -119,7 +122,7 @@ export default function LeftSidebar({
 
   return (
     <div
-      className="w-[260px] h-full flex flex-col shrink-0"
+      className="w-full h-full flex flex-col"
       style={{
         background: "var(--dc-bg-sidebar)",
         borderRight: "1px solid var(--dc-border-subtle)",
@@ -151,7 +154,12 @@ export default function LeftSidebar({
           </span>
         </div>
         <div className="flex items-center gap-1 text-[10px]">
-          {connected ? (
+          {reconnecting ? (
+            <span className="flex items-center gap-1" style={{ color: "var(--dc-yellow, #FEE75C)" }}>
+              <Loader2 className="w-3 h-3 animate-spin" />
+              <span className="text-[9px]">재연결</span>
+            </span>
+          ) : connected ? (
             <Wifi className="w-3.5 h-3.5 text-[#57F287]" />
           ) : (
             <WifiOff className="w-3.5 h-3.5 text-[#ED4245]" />

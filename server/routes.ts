@@ -25,6 +25,7 @@ const updateAgentSchema = z.object({
   model: z.string().optional(),
   maxTokens: z.number().min(1024).max(8192).optional(),
   temperature: z.string().optional(),
+  apiKey: z.string().nullable().optional(),
 }).strict();
 
 export async function registerRoutes(
@@ -491,6 +492,24 @@ export async function registerRoutes(
       res.json({ message: "워크플로우가 취소되었습니다" });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/workflows/:id/retry", async (req, res) => {
+    try {
+      await orchestrator.retryWorkflow(req.params.id);
+      res.json({ message: "워크플로우가 재실행되었습니다" });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/workflows/:id/tasks/:taskId/retry", async (req, res) => {
+    try {
+      await orchestrator.retryTask(req.params.id, req.params.taskId);
+      res.json({ message: "작업이 재실행되었습니다" });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
     }
   });
 

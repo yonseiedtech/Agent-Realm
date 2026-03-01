@@ -27,6 +27,8 @@ import {
   Monitor,
 } from "lucide-react";
 import { soundManager } from "@/lib/sounds";
+import { useToast } from "@/hooks/use-toast";
+import ChatSkeleton from "@/components/ui/ChatSkeleton";
 import type { Agent, ChatHistory } from "@shared/schema";
 
 interface CenterPanelProps {
@@ -49,6 +51,7 @@ export default function CenterPanel({
   onToggleRightPanel,
 }: CenterPanelProps) {
   const agent = agents.find((a) => a.id === selectedAgentId);
+  const { toast } = useToast();
   const [chatInput, setChatInput] = useState("");
   const [pendingImage, setPendingImage] = useState<{
     base64: string;
@@ -99,6 +102,9 @@ export default function CenterPanel({
       if (ttsEnabled && onTTSSpeak && data?.response && agent) {
         onTTSSpeak(data.response, agent.role);
       }
+    },
+    onError: (error: any) => {
+      toast({ title: "메시지 전송 실패", description: error.message, variant: "destructive" });
     },
   });
 
@@ -554,12 +560,7 @@ export default function CenterPanel({
       {/* Messages area */}
       <ScrollArea className="flex-1" ref={scrollRef}>
         <div className="p-4 space-y-4">
-          {historyLoading && (
-            <div className="text-center py-8" style={{ color: "var(--dc-text-muted)" }}>
-              <Loader2 className="w-5 h-5 mx-auto animate-spin mb-2" />
-              <span className="text-xs">불러오는 중...</span>
-            </div>
-          )}
+          {historyLoading && <ChatSkeleton />}
           {!historyLoading && chatHistoryData.length === 0 && (
             <div className="text-center py-12" style={{ color: "var(--dc-text-muted)" }}>
               <MessageSquare className="w-10 h-10 mx-auto mb-3 opacity-30" />
@@ -696,15 +697,21 @@ export default function CenterPanel({
                   </span>
                 </div>
                 <div
-                  className="rounded-2xl rounded-bl-md px-4 py-2.5 text-sm inline-flex items-center gap-1.5"
+                  className="rounded-2xl rounded-bl-md px-4 py-3 text-sm inline-flex items-center gap-1"
                   style={{
                     background: "var(--dc-bg-secondary)",
-                    color: "var(--dc-text-muted)",
                     boxShadow: "0 1px 3px rgba(0,0,0,0.06)",
                   }}
                 >
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  생각 중...
+                  {[0, 1, 2].map((i) => (
+                    <motion.span
+                      key={i}
+                      className="w-2 h-2 rounded-full"
+                      style={{ background: "var(--dc-text-muted)" }}
+                      animate={{ y: [0, -6, 0] }}
+                      transition={{ duration: 0.6, repeat: Infinity, delay: i * 0.15 }}
+                    />
+                  ))}
                 </div>
               </div>
             </div>

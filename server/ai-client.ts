@@ -29,6 +29,7 @@ export interface ChatRequest {
   system: string;
   messages: ChatMessage[];
   tools?: ToolDefinition[];
+  apiKey?: string | null;
 }
 
 export interface ToolCall {
@@ -53,24 +54,24 @@ export function getProvider(model: string): Provider {
 
 // ─── Client Factories ────────────────────────────────────────────
 
-async function getAnthropicClient(): Promise<Anthropic> {
+async function getAnthropicClient(agentApiKey?: string | null): Promise<Anthropic> {
   const customApiKey = await storage.getSetting("custom_api_key");
   const customBaseUrl = await storage.getSetting("custom_base_url");
-  const apiKey = customApiKey || process.env.ANTHROPIC_API_KEY;
+  const apiKey = agentApiKey || customApiKey || process.env.ANTHROPIC_API_KEY;
   const baseURL = customBaseUrl || undefined;
-  if (!apiKey) throw new Error("Anthropic API 키가 설정되지 않았습니다. 글로벌 설정에서 API 키를 입력해주세요.");
+  if (!apiKey) throw new Error("Anthropic API 키가 설정되지 않았습니다. 에이전트 설정 또는 글로벌 설정에서 API 키를 입력해주세요.");
   return new Anthropic({ apiKey, baseURL });
 }
 
-async function getOpenAIClient(): Promise<OpenAI> {
-  const apiKey = await storage.getSetting("openai_api_key");
-  if (!apiKey) throw new Error("OpenAI API 키가 설정되지 않았습니다. 글로벌 설정에서 API 키를 입력해주세요.");
+async function getOpenAIClient(agentApiKey?: string | null): Promise<OpenAI> {
+  const apiKey = agentApiKey || await storage.getSetting("openai_api_key");
+  if (!apiKey) throw new Error("OpenAI API 키가 설정되지 않았습니다. 에이전트 설정 또는 글로벌 설정에서 API 키를 입력해주세요.");
   return new OpenAI({ apiKey });
 }
 
-async function getGoogleClient(): Promise<GoogleGenerativeAI> {
-  const apiKey = await storage.getSetting("google_api_key");
-  if (!apiKey) throw new Error("Google Gemini API 키가 설정되지 않았습니다. 글로벌 설정에서 API 키를 입력해주세요.");
+async function getGoogleClient(agentApiKey?: string | null): Promise<GoogleGenerativeAI> {
+  const apiKey = agentApiKey || await storage.getSetting("google_api_key");
+  if (!apiKey) throw new Error("Google Gemini API 키가 설정되지 않았습니다. 에이전트 설정 또는 글로벌 설정에서 API 키를 입력해주세요.");
   return new GoogleGenerativeAI(apiKey);
 }
 
@@ -131,7 +132,7 @@ function toGeminiFunctionDeclarations(tools: ToolDefinition[]): FunctionDeclarat
 // ─── Anthropic Implementation ────────────────────────────────────
 
 async function chatAnthropic(req: ChatRequest): Promise<ChatResponse> {
-  const client = await getAnthropicClient();
+  const client = await getAnthropicClient(req.apiKey);
 
   const anthropicTools: Anthropic.Tool[] | undefined = req.tools?.map(t => ({
     name: t.name,
@@ -167,7 +168,7 @@ async function chatAnthropic(req: ChatRequest): Promise<ChatResponse> {
 // ─── OpenAI Implementation ───────────────────────────────────────
 
 async function chatOpenAI(req: ChatRequest): Promise<ChatResponse> {
-  const client = await getOpenAIClient();
+  const client = await getOpenAIClient(req.apiKey);
 
   const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
     { role: "system", content: req.system },
@@ -210,7 +211,7 @@ async function chatOpenAI(req: ChatRequest): Promise<ChatResponse> {
 // ─── Google Gemini Implementation ────────────────────────────────
 
 async function chatGoogle(req: ChatRequest): Promise<ChatResponse> {
-  const client = await getGoogleClient();
+  const client = await getGoogleClient(req.apiKey);
   const model = client.getGenerativeModel({
     model: req.model,
     systemInstruction: req.system,
@@ -281,6 +282,7 @@ export interface ToolResultContinuation {
   system: string;
   messages: ChatMessage[];
   tools?: ToolDefinition[];
+  apiKey?: string | null;
   toolResults: Array<{ toolCallId: string; name: string; result: string }>;
   previousResponse: ChatResponse;
 }
@@ -299,7 +301,7 @@ export async function continueWithToolResults(req: ToolResultContinuation): Prom
 }
 
 async function continueAnthropic(req: ToolResultContinuation): Promise<ChatResponse> {
-  const client = await getAnthropicClient();
+  const client = await getAnthropicClient(req.apiKey);
   const anthropicTools: Anthropic.Tool[] | undefined = req.tools?.map(t => ({
     name: t.name,
     description: t.description,
@@ -360,7 +362,7 @@ async function continueAnthropic(req: ToolResultContinuation): Promise<ChatRespo
 }
 
 async function continueOpenAI(req: ToolResultContinuation): Promise<ChatResponse> {
-  const client = await getOpenAIClient();
+  const client = await getOpenAIClient(req.apiKey);
 
   // Build assistant message with tool calls
   const assistantToolCalls = (req.previousResponse.toolCalls || []).map(tc => ({
@@ -418,7 +420,7 @@ async function continueOpenAI(req: ToolResultContinuation): Promise<ChatResponse
 }
 
 async function continueGoogle(req: ToolResultContinuation): Promise<ChatResponse> {
-  const client = await getGoogleClient();
+  const client = await getGoogleClient(req.apiKey);
   const model = client.getGenerativeModel({
     model: req.model,
     systemInstruction: req.system,

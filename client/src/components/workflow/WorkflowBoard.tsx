@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
+import { Loader2, GitBranch } from "lucide-react";
 import WorkflowNode from "./WorkflowNode";
 import WorkflowEdge from "./WorkflowEdge";
 import WorkflowControls from "./WorkflowControls";
@@ -53,6 +55,7 @@ export default function WorkflowBoard({ agents }: WorkflowBoardProps) {
   const [newRequest, setNewRequest] = useState("");
   const [showCreateForm, setShowCreateForm] = useState(false);
   const queryClient = useQueryClient();
+  const { toast } = useToast();
 
   const { data: workflows = [] } = useQuery<WorkflowSummary[]>({
     queryKey: ["/api/workflows"],
@@ -75,13 +78,29 @@ export default function WorkflowBoard({ agents }: WorkflowBoardProps) {
       if (data?.workflowId) setSelectedWorkflowId(data.workflowId);
       setNewRequest("");
       setShowCreateForm(false);
+      toast({ title: "워크플로우가 생성되었습니다" });
+    },
+    onError: (error: any) => {
+      toast({ title: "워크플로우 생성 실패", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const retryTaskMutation = useMutation({
+    mutationFn: async ({ workflowId, taskId }: { workflowId: string; taskId: string }) => {
+      await apiRequest("POST", `/api/workflows/${workflowId}/tasks/${taskId}/retry`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/workflows"] });
+      toast({ title: "작업을 재실행합니다" });
+    },
+    onError: (error: any) => {
+      toast({ title: "작업 재실행 실패", description: error.message, variant: "destructive" });
     },
   });
 
   // Layout tasks in DAG levels
   function layoutTasks(tasks: WorkflowTask[], deps: TaskDependency[]) {
     const levels: Record<string, number> = {};
-    const taskMap = new Map(tasks.map(t => [t.id, t]));
 
     // Calculate levels via BFS
     const inDeps = new Map<string, string[]>();
@@ -212,7 +231,19 @@ export default function WorkflowBoard({ agents }: WorkflowBoardProps) {
       )}
 
       {/* DAG visualization */}
-      <div className="flex-1 overflow-auto p-4">
+      <div className="flex-1 overflow-auto p-4 relative">
+        {/* Create overlay */}
+        {createMutation.isPending && (
+          <div className="absolute inset-0 z-10 flex items-center justify-center" style={{ background: "rgba(255,255,255,0.6)" }}>
+            <div className="flex flex-col items-center gap-2">
+              <Loader2 className="w-8 h-8 animate-spin" style={{ color: "var(--dc-accent)" }} />
+              <span className="text-sm font-medium" style={{ color: "var(--dc-text-secondary)" }}>
+                워크플로우 생성 중...
+              </span>
+            </div>
+          </div>
+        )}
+
         {detail ? (
           (() => {
             const { positions, svgWidth, svgHeight } = layoutTasks(detail.tasks, detail.dependencies);
@@ -249,8 +280,14 @@ export default function WorkflowBoard({ agents }: WorkflowBoardProps) {
                       agentName={agent?.name}
                       agentRole={agent?.role || task.suggestedRole || undefined}
                       status={task.status}
+                      result={task.result}
                       x={pos.x}
                       y={pos.y}
+                      onRetry={
+                        task.status === "failed"
+                          ? () => retryTaskMutation.mutate({ workflowId: detail.workflow.id, taskId: task.id })
+                          : undefined
+                      }
                     />
                   );
                 })}
@@ -258,10 +295,18 @@ export default function WorkflowBoard({ agents }: WorkflowBoardProps) {
             );
           })()
         ) : (
-          <div className="flex items-center justify-center h-full text-sm" style={{ color: "var(--dc-text-muted)" }}>
-            {workflows.length === 0
-              ? "워크플로우가 없습니다. [+ 새 워크플로우]로 시작하세요."
-              : "워크플로우를 선택하세요."}
+          <div className="flex flex-col items-center justify-center h-full gap-3">
+            <GitBranch className="w-12 h-12" style={{ color: "var(--dc-text-muted)", opacity: 0.3 }} />
+            <span className="text-sm font-medium" style={{ color: "var(--dc-text-muted)" }}>
+              {workflows.length === 0
+                ? "워크플로우가 없습니다"
+                : "워크플로우를 선택하세요"}
+            </span>
+            <span className="text-xs" style={{ color: "var(--dc-text-muted)", opacity: 0.7 }}>
+              {workflows.length === 0
+                ? "[+ 새 워크플로우] 버튼으로 시작하세요"
+                : "상단 드롭다운에서 워크플로우를 선택하세요"}
+            </span>
           </div>
         )}
       </div>

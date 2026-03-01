@@ -1,7 +1,6 @@
 import { useState, useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
-import { motion } from "framer-motion";
 import {
   roleLabels,
   statusLabels,
@@ -31,6 +30,8 @@ import {
   X,
   RefreshCw,
 } from "lucide-react";
+import { Skeleton } from "@/components/ui/skeleton";
+import { useToast } from "@/hooks/use-toast";
 import MemoryInspector from "@/components/memory/MemoryInspector";
 import type { Agent, Task, ActivityLog, AgentMessage } from "@shared/schema";
 
@@ -59,7 +60,9 @@ export default function DetailPanel({ agent, onClose }: DetailPanelProps) {
   const [model, setModel] = useState("claude-sonnet-4-6");
   const [maxTokens, setMaxTokens] = useState(4096);
   const [temperature, setTemperature] = useState(1);
+  const [apiKey, setApiKey] = useState("");
   const queryClient = useQueryClient();
+  const { toast } = useToast();
 
   useEffect(() => {
     if (agent) {
@@ -67,6 +70,7 @@ export default function DetailPanel({ agent, onClose }: DetailPanelProps) {
       setModel(agent.model);
       setMaxTokens(agent.maxTokens);
       setTemperature(parseFloat(agent.temperature));
+      setApiKey(agent.apiKey || "");
     }
   }, [
     agent?.id,
@@ -74,15 +78,16 @@ export default function DetailPanel({ agent, onClose }: DetailPanelProps) {
     agent?.model,
     agent?.maxTokens,
     agent?.temperature,
+    agent?.apiKey,
   ]);
 
-  const { data: agentTasks = [] } = useQuery<Task[]>({
+  const { data: agentTasks = [], isLoading: tasksLoading } = useQuery<Task[]>({
     queryKey: [`/api/agents/${agent.id}/tasks`],
     refetchInterval: 5000,
     enabled: !!agent.id,
   });
 
-  const { data: activities = [] } = useQuery<ActivityLog[]>({
+  const { data: activities = [], isLoading: activitiesLoading } = useQuery<ActivityLog[]>({
     queryKey: ["/api/activities"],
     refetchInterval: 5000,
   });
@@ -98,11 +103,16 @@ export default function DetailPanel({ agent, onClose }: DetailPanelProps) {
       model?: string;
       maxTokens?: number;
       temperature?: string;
+      apiKey?: string | null;
     }) => {
       await apiRequest("PATCH", `/api/agents/${agent.id}`, data);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/agents"] });
+      toast({ title: "설정이 저장되었습니다" });
+    },
+    onError: (error: any) => {
+      toast({ title: "설정 저장 실패", description: error.message, variant: "destructive" });
     },
   });
 
@@ -113,8 +123,18 @@ export default function DetailPanel({ agent, onClose }: DetailPanelProps) {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/agents"] });
+      toast({ title: "아바타가 생성되었습니다" });
+    },
+    onError: (error: any) => {
+      toast({ title: "아바타 생성 실패", description: error.message, variant: "destructive" });
     },
   });
+
+  const getProviderLabel = (m: string) => {
+    if (m.startsWith("gpt-") || m.startsWith("o1") || m.startsWith("o3") || m.startsWith("o4")) return "OpenAI";
+    if (m.startsWith("gemini-")) return "Google Gemini";
+    return "Anthropic";
+  };
 
   const handleSaveSettings = () => {
     updateSettingsMutation.mutate({
@@ -122,6 +142,7 @@ export default function DetailPanel({ agent, onClose }: DetailPanelProps) {
       model,
       maxTokens,
       temperature: temperature.toString(),
+      apiKey: apiKey.trim() || null,
     });
   };
 
@@ -144,12 +165,8 @@ export default function DetailPanel({ agent, onClose }: DetailPanelProps) {
   ].sort((a, b) => b._time - a._time);
 
   return (
-    <motion.div
-      initial={{ x: 320 }}
-      animate={{ x: 0 }}
-      exit={{ x: 320 }}
-      transition={{ type: "spring", stiffness: 300, damping: 30 }}
-      className="w-[320px] h-full flex flex-col shrink-0"
+    <div
+      className="w-full h-full flex flex-col"
       style={{
         background: "var(--dc-bg-secondary)",
         borderLeft: "1px solid var(--dc-border-subtle)",
@@ -250,7 +267,14 @@ export default function DetailPanel({ agent, onClose }: DetailPanelProps) {
         {/* Tasks tab */}
         <TabsContent value="tasks" className="flex-1 mt-0 overflow-auto">
           <div className="p-3 space-y-2">
-            {agentTasks.length === 0 && (
+            {tasksLoading && (
+              <div className="space-y-2">
+                {[1, 2, 3].map((i) => (
+                  <Skeleton key={i} className="h-20 w-full rounded-lg" />
+                ))}
+              </div>
+            )}
+            {!tasksLoading && agentTasks.length === 0 && (
               <div
                 className="text-center text-xs py-8"
                 style={{ color: "var(--dc-text-muted)" }}
@@ -395,6 +419,28 @@ export default function DetailPanel({ agent, onClose }: DetailPanelProps) {
                 className="py-1"
               />
             </div>
+            <div>
+              <label
+                className="text-[11px] mb-1 block"
+                style={{ color: "var(--dc-text-muted)" }}
+              >
+                API 키 ({getProviderLabel(model)})
+              </label>
+              <input
+                type="password"
+                placeholder={`${getProviderLabel(model)} API 키 (비어있으면 글로벌 설정 사용)`}
+                className="w-full px-2 py-1.5 rounded-md border-none text-xs outline-none"
+                style={{ background: "var(--dc-bg-input)", color: "var(--dc-text-primary)" }}
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
+              />
+              <p
+                className="text-[10px] mt-1"
+                style={{ color: "var(--dc-text-muted)" }}
+              >
+                에이전트 전용 키가 글로벌 설정보다 우선합니다
+              </p>
+            </div>
             <Button
               className="w-full text-black font-semibold text-xs h-8"
               style={{ background: "#57F287" }}
@@ -405,12 +451,6 @@ export default function DetailPanel({ agent, onClose }: DetailPanelProps) {
                 ? "저장 중..."
                 : "설정 저장"}
             </Button>
-            {updateSettingsMutation.isSuccess && (
-              <p className="text-[10px] text-[#57F287] text-center">
-                설정이 저장되었습니다
-              </p>
-            )}
-
             <div
               className="pt-3 mt-3"
               style={{ borderTop: "1px solid var(--dc-border-subtle)" }}
@@ -440,16 +480,6 @@ export default function DetailPanel({ agent, onClose }: DetailPanelProps) {
                     ? "아바타 재생성"
                     : "AI 아바타 생성"}
               </Button>
-              {generateAvatarMutation.isSuccess && (
-                <p className="text-[10px] text-[#57F287] text-center mt-1">
-                  아바타가 생성되었습니다
-                </p>
-              )}
-              {generateAvatarMutation.isError && (
-                <p className="text-[10px] text-red-500 text-center mt-1">
-                  아바타 생성에 실패했습니다
-                </p>
-              )}
             </div>
           </div>
         </TabsContent>
@@ -458,7 +488,14 @@ export default function DetailPanel({ agent, onClose }: DetailPanelProps) {
         <TabsContent value="activity" className="flex-1 mt-0 min-h-0">
           <ScrollArea className="h-full">
             <div className="p-3 space-y-1">
-              {agentActivities.length === 0 && (
+              {activitiesLoading && (
+                <div className="space-y-1">
+                  {[1, 2, 3].map((i) => (
+                    <Skeleton key={i} className="h-14 w-full rounded-md" />
+                  ))}
+                </div>
+              )}
+              {!activitiesLoading && agentActivities.length === 0 && (
                 <div
                   className="text-center text-xs py-8"
                   style={{ color: "var(--dc-text-muted)" }}
@@ -519,6 +556,6 @@ export default function DetailPanel({ agent, onClose }: DetailPanelProps) {
           <MemoryInspector agentId={agent.id} agentName={agent.name} />
         </TabsContent>
       </Tabs>
-    </motion.div>
+    </div>
   );
 }

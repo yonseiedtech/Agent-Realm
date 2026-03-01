@@ -29,6 +29,7 @@ export interface Agent {
   model: string;
   maxTokens: number;
   temperature: string;
+  apiKey: string | null;
   createdAt: Date;
 }
 
@@ -45,6 +46,7 @@ export const insertAgentSchema = z.object({
   model: z.string().default("claude-sonnet-4-6"),
   maxTokens: z.number().default(4096),
   temperature: z.string().default("1"),
+  apiKey: z.string().nullable().default(null),
 });
 
 export type InsertAgent = z.infer<typeof insertAgentSchema>;
